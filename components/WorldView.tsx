@@ -34,7 +34,14 @@ const C = {
   green: Cesium.Color.fromCssColorString("#5dff9e"),
   muted: Cesium.Color.fromCssColorString("#6c5b8c"),
 };
-const FLIGHT_OUTLINE = Cesium.Color.fromCssColorString("#3a0a24");
+// magenta airplane glyph (drawn pointing "up"/north; each plane's billboard
+// is rotated to its heading). Baked colors + thin dark outline for contrast
+// against bright parts of the globe.
+const PLANE_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
+  "<path d='M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z' " +
+  "fill='#ff2d95' stroke='#2a0418' stroke-width='0.7' stroke-linejoin='round'/></svg>";
+const PLANE_IMAGE = `data:image/svg+xml,${encodeURIComponent(PLANE_SVG)}`;
 
 const POLL_MS: Record<LayerId, number> = {
   flights: 15000,
@@ -254,6 +261,7 @@ export default function WorldView() {
 
     if (process.env.NODE_ENV !== "production") {
       (window as unknown as Record<string, unknown>).__wvViewer = viewer;
+      (window as unknown as Record<string, unknown>).__wvCesium = Cesium;
       (window as unknown as Record<string, unknown>).__wvFlights =
         flightStateRef.current;
     }
@@ -432,11 +440,17 @@ export default function WorldView() {
               ? Cesium.Cartesian3.fromDegrees(s.lon, s.lat, s.alt)
               : Cesium.Cartesian3.ZERO;
           }, false),
-          point: {
-            pixelSize: 5,
-            color: C.magenta,
-            outlineColor: FLIGHT_OUTLINE,
-            outlineWidth: 1,
+          billboard: {
+            image: PLANE_IMAGE,
+            width: 20,
+            height: 20,
+            // billboard.rotation is counter-clockwise; heading is clockwise
+            // from north, so negate. Screen-space (default alignedAxis).
+            rotation: new Cesium.CallbackProperty(() => {
+              const s = flightStateRef.current.get(id);
+              return s ? -Cesium.Math.toRadians(s.heading) : 0;
+            }, false),
+            alignedAxis: Cesium.Cartesian3.ZERO,
           },
         });
       }
