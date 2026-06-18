@@ -52,7 +52,10 @@ const POLL_MS: Record<LayerId, number> = {
   traffic: 15000,
 };
 
-const FETCHERS: Record<LayerId, () => Promise<{ items: unknown[] }>> = {
+const FETCHERS: Record<
+  LayerId,
+  () => Promise<{ items: unknown[]; source?: string }>
+> = {
   flights: fetchFlights,
   ships: fetchShips,
   satellites: fetchSatellites,
@@ -89,16 +92,26 @@ function trafficColor(level: string): Cesium.Color {
 
 type SelMap = Map<string, FeedEntity>;
 
-// live dead-reckoning state for one aircraft
+// live state for one aircraft. We keep a "truth" target (tLon/tLat/tAlt) that
+// is corrected on each poll and dead-reckoned forward every frame, and a
+// "displayed" position (lon/lat/alt) that eases toward the truth — so position
+// corrections glide in smoothly instead of teleporting/snapping.
 interface FlightState {
-  lon: number;
+  lon: number; // displayed (rendered)
   lat: number;
   alt: number;
+  tLon: number; // truth target
+  tLat: number;
+  tAlt: number;
   heading: number; // deg
   velocity: number; // m/s
+  onGround: boolean;
 }
 
 const M_PER_DEG_LAT = 111_320;
+// time constant for easing the displayed position toward the truth (seconds).
+// ~0.8s feels smooth without lagging noticeably behind the real position.
+const EASE_TAU = 0.8;
 
 function renderLayer(
   ds: Cesium.CustomDataSource,
@@ -213,6 +226,9 @@ export default function WorldView() {
   const flightDsRef = useRef<Cesium.CustomDataSource | null>(null);
   const flightStateRef = useRef<Map<string, FlightState>>(new Map());
   const lastTickRef = useRef(0);
+  // once we've seen a real feed, ignore synthetic-fallback polls so the map
+  // doesn't flip-flop between thousands of real planes and 240 placeholders.
+  const haveRealFlightsRef = useRef(false);
 
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Record<LayerId, unknown[]>>({
@@ -294,7 +310,7 @@ export default function WorldView() {
     viewer.dataSources.add(flightDs);
     flightDsRef.current = flightDs;
 
-    // ---- per-frame dead reckoning: glide each plane along its heading ----
+    // ---- per-frame: dead-reckon the truth target, ease the display to it ----
     lastTickRef.current = performance.now();
     const onTick = () => {
       const now = performance.now();
@@ -303,17 +319,32 @@ export default function WorldView() {
       if (dt <= 0) return;
       if (dt > 2) dt = 2; // clamp after the tab was backgrounded
 
+      const k = 1 - Math.exp(-dt / EASE_TAU); // fraction to close this frame
+
       flightStateRef.current.forEach((st) => {
-        if (!st.velocity) return;
-        const dist = st.velocity * dt; // meters this frame
-        const th = Cesium.Math.toRadians(st.heading);
-        const cosLat = Math.cos(Cesium.Math.toRadians(st.lat)) || 1e-6;
-        st.lat += (dist * Math.cos(th)) / M_PER_DEG_LAT;
-        st.lon += (dist * Math.sin(th)) / (M_PER_DEG_LAT * cosLat);
-        if (st.lat > 89) st.lat = 89;
-        if (st.lat < -89) st.lat = -89;
+        // 1) advance the truth target along its heading (skip parked planes)
+        if (st.velocity && !st.onGround) {
+          const dist = st.velocity * dt;
+          const th = Cesium.Math.toRadians(st.heading);
+          const cosLat = Math.cos(Cesium.Math.toRadians(st.tLat)) || 1e-6;
+          st.tLat += (dist * Math.cos(th)) / M_PER_DEG_LAT;
+          st.tLon += (dist * Math.sin(th)) / (M_PER_DEG_LAT * cosLat);
+          if (st.tLat > 89) st.tLat = 89;
+          if (st.tLat < -89) st.tLat = -89;
+          if (st.tLon > 180) st.tLon -= 360;
+          if (st.tLon < -180) st.tLon += 360;
+        }
+
+        // 2) ease the displayed position toward the truth (no hard snapping).
+        //    Handle the antimeridian so planes never wrap "the long way".
+        let dLon = st.tLon - st.lon;
+        if (dLon > 180) dLon -= 360;
+        else if (dLon < -180) dLon += 360;
+        st.lon += dLon * k;
         if (st.lon > 180) st.lon -= 360;
-        if (st.lon < -180) st.lon += 360;
+        else if (st.lon < -180) st.lon += 360;
+        st.lat += (st.tLat - st.lat) * k;
+        st.alt += (st.tAlt - st.alt) * k;
       });
     };
     viewer.clock.onTick.addEventListener(onTick);
@@ -370,7 +401,17 @@ export default function WorldView() {
       }
       const run = async () => {
         try {
-          const { items } = await FETCHERS[id]();
+          const res = await FETCHERS[id]();
+          const items = res.items;
+          // flights: once we have a real feed, drop synthetic-fallback polls
+          // so thousands of real planes don't get replaced by 240 placeholders.
+          if (id === "flights") {
+            const isReal = res.source
+              ? res.source.startsWith("opensky")
+              : true;
+            if (!isReal && haveRealFlightsRef.current) return;
+            if (isReal) haveRealFlightsRef.current = true;
+          }
           setData((d) => ({ ...d, [id]: items }));
           setCount(id, items.length);
           if (!loadedRef.current.has(id)) {
@@ -411,25 +452,47 @@ export default function WorldView() {
 
     const items = data.flights as Flight[];
     const seen = new Set<string>();
+    const nowMs = Date.now();
 
     for (const f of items) {
       seen.add(f.id);
-      const alt = Math.max(f.altitude, 2000);
+      const alt = Math.max(f.altitude, f.onGround ? 0 : 1500);
+
+      // propagate the reported fix to "now" using its own timestamp, so a
+      // plane last seen 30s ago starts from where it actually is, not stale.
+      let pLon = f.lon;
+      let pLat = f.lat;
+      const ageSec = Math.min(Math.max((nowMs - f.timePosition) / 1000, 0), 120);
+      if (f.velocity && !f.onGround && ageSec > 0) {
+        const dist = f.velocity * ageSec;
+        const th = Cesium.Math.toRadians(f.heading);
+        const cosLat = Math.cos(Cesium.Math.toRadians(f.lat)) || 1e-6;
+        pLat = f.lat + (dist * Math.cos(th)) / M_PER_DEG_LAT;
+        pLon = f.lon + (dist * Math.sin(th)) / (M_PER_DEG_LAT * cosLat);
+        if (pLon > 180) pLon -= 360;
+        else if (pLon < -180) pLon += 360;
+      }
+
       const st = flightStateRef.current.get(f.id);
       if (st) {
-        // snap to the freshly-reported truth, keep gliding from there
-        st.lon = f.lon;
-        st.lat = f.lat;
-        st.alt = alt;
+        // correct the truth target; the displayed position eases toward it
+        st.tLon = pLon;
+        st.tLat = pLat;
+        st.tAlt = alt;
         st.heading = f.heading;
         st.velocity = f.velocity;
+        st.onGround = f.onGround;
       } else {
         flightStateRef.current.set(f.id, {
-          lon: f.lon,
-          lat: f.lat,
+          lon: pLon,
+          lat: pLat,
           alt,
+          tLon: pLon,
+          tLat: pLat,
+          tAlt: alt,
           heading: f.heading,
           velocity: f.velocity,
+          onGround: f.onGround,
         });
         const id = f.id;
         ds.entities.add({

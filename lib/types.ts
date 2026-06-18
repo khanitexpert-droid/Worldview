@@ -14,9 +14,12 @@ export interface Flight {
   lon: number;
   lat: number;
   altitude: number; // meters
-  heading: number; // degrees
-  velocity: number; // m/s
-  country: string;
+  heading: number; // degrees (true track)
+  velocity: number; // m/s (ground speed)
+  verticalRate: number; // m/s (+climb / -descent)
+  onGround: boolean;
+  country: string; // origin country
+  timePosition: number; // epoch ms of this position fix (for accurate propagation)
 }
 
 export interface Satellite {

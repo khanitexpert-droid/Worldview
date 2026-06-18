@@ -84,15 +84,22 @@ export async function GET() {
     const data = (await res.json()) as { states: unknown[][] | null };
 
     const items: Flight[] = (data.states ?? [])
+      // OpenSky state vector indices:
+      // 0 icao24, 1 callsign, 2 origin_country, 3 time_position,
+      // 4 last_contact, 5 lon, 6 lat, 7 baro_alt, 8 on_ground, 9 velocity,
+      // 10 true_track, 11 vertical_rate, 13 geo_alt
       .map((s) => ({
         id: String(s[0]),
         callsign: (String(s[1] ?? "").trim() || "UNKNOWN").toUpperCase(),
         country: String(s[2] ?? "—"),
         lon: Number(s[5]),
         lat: Number(s[6]),
-        altitude: Number(s[7] ?? s[13] ?? 0),
+        altitude: Number(s[13] ?? s[7] ?? 0),
         velocity: Number(s[9] ?? 0),
         heading: Number(s[10] ?? 0),
+        verticalRate: Number(s[11] ?? 0),
+        onGround: Boolean(s[8]),
+        timePosition: (Number(s[3] ?? s[4]) || Date.now() / 1000) * 1000,
       }))
       .filter(
         (f) =>
@@ -150,6 +157,9 @@ function syntheticFlights(): Flight[] {
       altitude: 8000 + Math.random() * 4000,
       velocity: 180 + Math.random() * 80,
       heading: Math.random() * 360,
+      verticalRate: 0,
+      onGround: false,
+      timePosition: Date.now(),
     });
   }
   return out;

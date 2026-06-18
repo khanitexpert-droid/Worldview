@@ -15,18 +15,28 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode][] } {
   switch (e.kind) {
-    case "flights":
+    case "flights": {
+      const knots = Math.round(e.velocity * 1.94384);
+      const vs = e.verticalRate;
+      const vsStr =
+        vs > 0.3
+          ? `▲ ${Math.abs(vs).toFixed(1)} m/s`
+          : vs < -0.3
+            ? `▼ ${Math.abs(vs).toFixed(1)} m/s`
+            : "LEVEL";
       return {
         title: e.callsign,
         rows: [
-          ["TYPE", "AIRCRAFT"],
-          ["COUNTRY", e.country],
+          ["STATUS", e.onGround ? "ON GROUND" : "AIRBORNE"],
+          ["ORIGIN", e.country],
           ["ALT", `${Math.round(e.altitude).toLocaleString()} m`],
+          ["SPD", `${knots} kn`],
           ["HDG", `${Math.round(e.heading)}°`],
-          ["SPD", `${Math.round(e.velocity)} m/s`],
+          ["V/S", vsStr],
           ["ICAO", e.id.toUpperCase()],
         ],
       };
+    }
     case "ships":
       return {
         title: e.name,

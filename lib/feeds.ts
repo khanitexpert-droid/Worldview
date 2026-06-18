@@ -13,7 +13,8 @@ async function getJSON<T>(url: string): Promise<T> {
   return res.json();
 }
 
-export const fetchFlights = () => getJSON<{ items: Flight[] }>("/api/flights");
+export const fetchFlights = () =>
+  getJSON<{ items: Flight[]; source: string; live: boolean }>("/api/flights");
 export const fetchShips = () => getJSON<{ items: Ship[] }>("/api/ships");
 export const fetchSatellites = () =>
   getJSON<{ items: Satellite[] }>("/api/satellites");
