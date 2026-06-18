@@ -15,7 +15,7 @@ import {
   fetchSatellites,
   fetchTraffic,
 } from "@/lib/feeds";
-import type { FeedEntity, LayerId } from "@/lib/types";
+import type { Flight, FeedEntity, LayerId } from "@/lib/types";
 
 import TopBar from "./hud/TopBar";
 import DataLayersPanel from "./hud/DataLayersPanel";
@@ -34,6 +34,7 @@ const C = {
   green: Cesium.Color.fromCssColorString("#5dff9e"),
   muted: Cesium.Color.fromCssColorString("#6c5b8c"),
 };
+const FLIGHT_OUTLINE = Cesium.Color.fromCssColorString("#3a0a24");
 
 const POLL_MS: Record<LayerId, number> = {
   flights: 15000,
@@ -52,6 +53,12 @@ const FETCHERS: Record<LayerId, () => Promise<{ items: unknown[] }>> = {
   cctv: fetchCctv,
   traffic: fetchTraffic,
 };
+
+// layers handled by the generic (snap-on-poll) renderer — flights are special
+// (interpolated every frame), so they're excluded here.
+const STATIC_LAYERS = (Object.keys(FETCHERS) as LayerId[]).filter(
+  (id) => id !== "flights"
+);
 
 function quakeColor(mag: number): Cesium.Color {
   if (mag >= 6) return C.red;
@@ -75,6 +82,17 @@ function trafficColor(level: string): Cesium.Color {
 
 type SelMap = Map<string, FeedEntity>;
 
+// live dead-reckoning state for one aircraft
+interface FlightState {
+  lon: number;
+  lat: number;
+  alt: number;
+  heading: number; // deg
+  velocity: number; // m/s
+}
+
+const M_PER_DEG_LAT = 111_320;
+
 function renderLayer(
   ds: Cesium.CustomDataSource,
   id: LayerId,
@@ -82,28 +100,6 @@ function renderLayer(
   sel: SelMap
 ) {
   ds.entities.removeAll();
-
-  if (id === "flights") {
-    for (const f of items as import("@/lib/types").Flight[]) {
-      const eid = `flights:${f.id}`;
-      ds.entities.add({
-        id: eid,
-        position: Cesium.Cartesian3.fromDegrees(
-          f.lon,
-          f.lat,
-          Math.max(f.altitude, 2000)
-        ),
-        point: {
-          pixelSize: 5,
-          color: C.magenta,
-          outlineColor: Cesium.Color.fromCssColorString("#3a0a24"),
-          outlineWidth: 1,
-        },
-      });
-      sel.set(eid, { kind: "flights", ...f });
-    }
-    return;
-  }
 
   if (id === "ships") {
     for (const s of items as import("@/lib/types").Ship[]) {
@@ -206,6 +202,11 @@ export default function WorldView() {
   const loadedRef = useRef<Set<LayerId>>(new Set());
   const cursorThrottle = useRef(0);
 
+  // ---- flight interpolation state ----
+  const flightDsRef = useRef<Cesium.CustomDataSource | null>(null);
+  const flightStateRef = useRef<Map<string, FlightState>>(new Map());
+  const lastTickRef = useRef(0);
+
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Record<LayerId, unknown[]>>({
     flights: [],
@@ -251,6 +252,12 @@ export default function WorldView() {
     }
     viewerRef.current = viewer;
 
+    if (process.env.NODE_ENV !== "production") {
+      (window as unknown as Record<string, unknown>).__wvViewer = viewer;
+      (window as unknown as Record<string, unknown>).__wvFlights =
+        flightStateRef.current;
+    }
+
     const scene = viewer.scene;
     scene.backgroundColor = Cesium.Color.fromCssColorString("#05030a");
     scene.globe.baseColor = Cesium.Color.fromCssColorString("#0b0612");
@@ -273,6 +280,35 @@ export default function WorldView() {
     const selDs = new Cesium.CustomDataSource("selection");
     viewer.dataSources.add(selDs);
     selDsRef.current = selDs;
+
+    // dedicated datasource for interpolated flights
+    const flightDs = new Cesium.CustomDataSource("flights-live");
+    viewer.dataSources.add(flightDs);
+    flightDsRef.current = flightDs;
+
+    // ---- per-frame dead reckoning: glide each plane along its heading ----
+    lastTickRef.current = performance.now();
+    const onTick = () => {
+      const now = performance.now();
+      let dt = (now - lastTickRef.current) / 1000;
+      lastTickRef.current = now;
+      if (dt <= 0) return;
+      if (dt > 2) dt = 2; // clamp after the tab was backgrounded
+
+      flightStateRef.current.forEach((st) => {
+        if (!st.velocity) return;
+        const dist = st.velocity * dt; // meters this frame
+        const th = Cesium.Math.toRadians(st.heading);
+        const cosLat = Math.cos(Cesium.Math.toRadians(st.lat)) || 1e-6;
+        st.lat += (dist * Math.cos(th)) / M_PER_DEG_LAT;
+        st.lon += (dist * Math.sin(th)) / (M_PER_DEG_LAT * cosLat);
+        if (st.lat > 89) st.lat = 89;
+        if (st.lat < -89) st.lat = -89;
+        if (st.lon > 180) st.lon -= 360;
+        if (st.lon < -180) st.lon += 360;
+      });
+    };
+    viewer.clock.onTick.addEventListener(onTick);
 
     // interaction
     const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
@@ -305,6 +341,7 @@ export default function WorldView() {
     setReady(true);
 
     return () => {
+      viewer.clock.onTick.removeEventListener(onTick);
       handler.destroy();
       viewer.destroy();
       viewerRef.current = null;
@@ -349,13 +386,84 @@ export default function WorldView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, layers]);
 
-  // ---- render entities when data/layers change ----
+  // ---- flights: reconcile interpolation state on each poll (no full rebuild) ----
+  useEffect(() => {
+    const ds = flightDsRef.current;
+    if (!ds || !ready) return;
+    ds.show = layers.flights;
+
+    if (!layers.flights) {
+      ds.entities.removeAll();
+      flightStateRef.current.clear();
+      for (const k of [...selMapRef.current.keys()]) {
+        if (k.startsWith("flights:")) selMapRef.current.delete(k);
+      }
+      return;
+    }
+
+    const items = data.flights as Flight[];
+    const seen = new Set<string>();
+
+    for (const f of items) {
+      seen.add(f.id);
+      const alt = Math.max(f.altitude, 2000);
+      const st = flightStateRef.current.get(f.id);
+      if (st) {
+        // snap to the freshly-reported truth, keep gliding from there
+        st.lon = f.lon;
+        st.lat = f.lat;
+        st.alt = alt;
+        st.heading = f.heading;
+        st.velocity = f.velocity;
+      } else {
+        flightStateRef.current.set(f.id, {
+          lon: f.lon,
+          lat: f.lat,
+          alt,
+          heading: f.heading,
+          velocity: f.velocity,
+        });
+        const id = f.id;
+        ds.entities.add({
+          id: `flights:${id}`,
+          position: new Cesium.CallbackPositionProperty(() => {
+            const s = flightStateRef.current.get(id);
+            return s
+              ? Cesium.Cartesian3.fromDegrees(s.lon, s.lat, s.alt)
+              : Cesium.Cartesian3.ZERO;
+          }, false),
+          point: {
+            pixelSize: 5,
+            color: C.magenta,
+            outlineColor: FLIGHT_OUTLINE,
+            outlineWidth: 1,
+          },
+        });
+      }
+      selMapRef.current.set(`flights:${f.id}`, { kind: "flights", ...f });
+    }
+
+    // drop aircraft that fell out of the feed
+    for (const id of [...flightStateRef.current.keys()]) {
+      if (!seen.has(id)) {
+        flightStateRef.current.delete(id);
+        ds.entities.removeById(`flights:${id}`);
+        selMapRef.current.delete(`flights:${id}`);
+      }
+    }
+  }, [data.flights, layers.flights, ready]);
+
+  // ---- render the snap-on-poll layers when data/layers change ----
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !ready) return;
-    selMapRef.current.clear();
 
-    (Object.keys(FETCHERS) as LayerId[]).forEach((id) => {
+    // refresh selection entries for static layers only (flights manage theirs)
+    for (const k of [...selMapRef.current.keys()]) {
+      if (!k.startsWith("flights:")) selMapRef.current.delete(k);
+    }
+
+    STATIC_LAYERS.forEach((id) => {
       let ds = dsMapRef.current.get(id);
       if (!ds) {
         ds = new Cesium.CustomDataSource(id);
@@ -414,6 +522,25 @@ export default function WorldView() {
     if (!ds) return;
     ds.entities.removeAll();
     if (!selected) return;
+    // for a moving aircraft, track its live interpolated position
+    if (selected.kind === "flights") {
+      const id = selected.id;
+      ds.entities.add({
+        position: new Cesium.CallbackPositionProperty(() => {
+          const s = flightStateRef.current.get(id);
+          return s
+            ? Cesium.Cartesian3.fromDegrees(s.lon, s.lat, s.alt)
+            : Cesium.Cartesian3.ZERO;
+        }, false),
+        point: {
+          pixelSize: 24,
+          color: Cesium.Color.TRANSPARENT,
+          outlineColor: C.cyan,
+          outlineWidth: 2,
+        },
+      });
+      return;
+    }
     const e = selected as unknown as { lon: number; lat: number; altKm?: number };
     const height =
       selected.kind === "satellites" ? (selected.altKm ?? 0) * 1000 : 0;
