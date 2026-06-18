@@ -275,13 +275,6 @@ export default function WorldView() {
     }
     viewerRef.current = viewer;
 
-    if (process.env.NODE_ENV !== "production") {
-      (window as unknown as Record<string, unknown>).__wvViewer = viewer;
-      (window as unknown as Record<string, unknown>).__wvCesium = Cesium;
-      (window as unknown as Record<string, unknown>).__wvFlights =
-        flightStateRef.current;
-    }
-
     const scene = viewer.scene;
     scene.backgroundColor = Cesium.Color.fromCssColorString("#05030a");
     scene.globe.baseColor = Cesium.Color.fromCssColorString("#0b0612");
