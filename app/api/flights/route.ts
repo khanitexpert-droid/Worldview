@@ -19,48 +19,57 @@ const OPENSKY_TOKEN_URL =
 // points; the original site tracks ~6.5k.
 const MAX_FLIGHTS = 6000;
 
-// cached OAuth token (module scope persists across requests on a warm lambda)
+// OAuth token cache (module scope persists across requests on a warm lambda).
 let tokenCache: { token: string; expires: number } | null = null;
+// OpenSky's token server rate-limits hard; if a fetch fails, back off rather
+// than hammering it on every request (which makes the throttling worse).
+let tokenCooldownUntil = 0;
+
+// Last successful live feed. Served on transient OpenSky failures so the map
+// keeps showing real aircraft instead of dropping to synthetic placeholders.
+let lastGood: { items: Flight[]; ts: number } | null = null;
+const LAST_GOOD_TTL = 10 * 60 * 1000; // 10 min
 
 async function getAccessToken(): Promise<string | null> {
   const id = process.env.OPENSKY_CLIENT_ID;
   const secret = process.env.OPENSKY_CLIENT_SECRET;
   if (!id || !secret) return null;
 
-  if (tokenCache && Date.now() < tokenCache.expires) return tokenCache.token;
+  const now = Date.now();
+  if (tokenCache && now < tokenCache.expires) return tokenCache.token;
+  if (now < tokenCooldownUntil) return null; // recently failed — back off
 
-  const body = new URLSearchParams({
-    grant_type: "client_credentials",
-    client_id: id,
-    client_secret: secret,
-  });
-  const res = await fetch(OPENSKY_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-    cache: "no-store",
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) throw new Error(`opensky auth ${res.status}`);
-  const json = (await res.json()) as { access_token: string; expires_in: number };
-  tokenCache = {
-    token: json.access_token,
-    // refresh a minute before actual expiry
-    expires: Date.now() + (json.expires_in - 60) * 1000,
-  };
-  return json.access_token;
+  try {
+    const res = await fetch(OPENSKY_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: id,
+        client_secret: secret,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`auth ${res.status}`);
+    const json = (await res.json()) as {
+      access_token: string;
+      expires_in: number;
+    };
+    tokenCache = {
+      token: json.access_token,
+      expires: now + (json.expires_in - 60) * 1000, // refresh a min early
+    };
+    return json.access_token;
+  } catch (e) {
+    console.error("[flights] token fetch failed; backing off 60s:", e);
+    tokenCooldownUntil = now + 60_000;
+    return null;
+  }
 }
 
 export async function GET() {
-  // Don't let an auth failure kill the request — if the OAuth token can't be
-  // fetched (OpenSky's auth server is flaky from some datacenters), still try
-  // an anonymous (rate-limited) states call rather than giving up entirely.
-  let token: string | null = null;
-  try {
-    token = await getAccessToken();
-  } catch (e) {
-    console.error("[flights] OpenSky auth failed, trying anonymous:", e);
-  }
+  const token = await getAccessToken();
 
   try {
     const res = await fetch(OPENSKY, {
@@ -93,13 +102,24 @@ export async function GET() {
       )
       .slice(0, MAX_FLIGHTS);
 
+    if (items.length) lastGood = { items, ts: Date.now() };
+
     return Response.json({
       items,
       source: token ? "opensky-auth" : "opensky-anon",
       live: true,
     });
   } catch (err) {
-    // Fallback so the UI keeps working if OpenSky throttles or is down.
+    // Serve the last real feed if we have a recent one — much better than
+    // flipping the whole map back to synthetic on a transient hiccup.
+    if (lastGood && Date.now() - lastGood.ts < LAST_GOOD_TTL) {
+      return Response.json({
+        items: lastGood.items,
+        source: "opensky-cached",
+        live: true,
+        error: String(err),
+      });
+    }
     return Response.json({
       items: syntheticFlights(),
       source: "fallback",
