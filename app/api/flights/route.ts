@@ -4,76 +4,116 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 30;
 
-// Live ADS-B from community feeds (airplanes.live / adsb.fi). No login — so,
-// unlike OpenSky, these aren't blocked from datacenter IPs like Vercel's.
-// They're radius-limited (max 250nm/point), so we query several anchor points
-// across the busy regions of the globe and merge them. Same response shape.
 const UA = "worldview-clone/1.0";
 const MAX_FLIGHTS = 6000;
-
-// Three free ADS-B mirrors (same data, different URL schemes). Anchor points
-// are round-robined across them so each mirror gets ~1/3 of the requests,
-// staying under their ~1 req/sec rate limits.
-const AL = "api.airplanes.live";
-const FI = "opendata.adsb.fi";
-const LOL = "api.adsb.lol";
-
-// [lat, lon, host] — 250nm-radius queries tiling the busy regions of the globe.
-const REGIONS: [number, number, string][] = [
-  // Europe
-  [50, 5, AL], // west/central Europe
-  [51, 0, FI], // UK / London
-  [41, 14, LOL], // Mediterranean / Italy
-  [58, 14, AL], // Scandinavia
-  [50, 25, FI], // eastern Europe
-  [39, 33, LOL], // Turkey
-  // Middle East / Africa
-  [25, 52, AL], // Gulf
-  [-26, 28, FI], // southern Africa
-  // North America
-  [40, -77, LOL], // US northeast
-  [29, -82, AL], // US southeast / Florida
-  [32, -97, FI], // US central / Texas
-  [41, -88, LOL], // US midwest / Chicago
-  [36, -119, AL], // US west / California
-  [47, -122, FI], // US northwest / Seattle
-  [20, -99, LOL], // Mexico
-  // South America
-  [-23, -46, AL], // Brazil / São Paulo
-  // Asia / Oceania
-  [22, 78, FI], // South Asia / India
-  [10, 100, LOL], // Southeast Asia
-  [35, 138, AL], // East Asia / Japan
-  [25, 114, FI], // China / Hong Kong
-  [-33, 151, LOL], // Australia east
-];
-
-interface AdsbAc {
-  hex?: string;
-  flight?: string;
-  r?: string;
-  t?: string;
-  desc?: string;
-  lat?: number;
-  lon?: number;
-  gs?: number; // ground speed, knots
-  track?: number; // deg
-  mag_heading?: number;
-  alt_baro?: number | "ground";
-  alt_geom?: number;
-  baro_rate?: number; // ft/min
-  geom_rate?: number;
-  seen_pos?: number; // seconds since position seen
-}
-
 const FT_TO_M = 0.3048;
 const KN_TO_MS = 0.514444;
 
-// in-memory cache so repeated client polls don't re-hit the feeds every time
-let cache: { items: Flight[]; ts: number } | null = null;
-const CACHE_TTL = 8000;
+// ---- shared snapshot cache (the key to staying under OpenSky's throttle) ----
+// Serve a cached snapshot for FRESH_TTL without hitting any upstream, so OpenSky
+// is queried at most ~once every 30s no matter how often clients poll. The
+// client interpolates between snapshots, so motion stays smooth despite the
+// caching. On a total upstream failure we serve the last snapshot up to
+// STALE_TTL old before falling back to a coherent synthetic feed.
+let cache: { items: Flight[]; ts: number; source: string } | null = null;
+const FRESH_TTL = 30_000;
+const STALE_TTL = 10 * 60_000;
 
-function mapAircraft(a: AdsbAc): Flight | null {
+// =================== primary: OpenSky /states/all (global) ===================
+const OPENSKY = "https://opensky-network.org/api/states/all";
+const OPENSKY_TOKEN_URL =
+  "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
+let tokenCache: { token: string; expires: number } | null = null;
+let tokenCooldownUntil = 0;
+
+async function getAccessToken(): Promise<string | null> {
+  const id = process.env.OPENSKY_CLIENT_ID;
+  const secret = process.env.OPENSKY_CLIENT_SECRET;
+  if (!id || !secret) return null;
+  const now = Date.now();
+  if (tokenCache && now < tokenCache.expires) return tokenCache.token;
+  if (now < tokenCooldownUntil) return null;
+  try {
+    const res = await fetch(OPENSKY_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: id,
+        client_secret: secret,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`auth ${res.status}`);
+    const j = (await res.json()) as { access_token: string; expires_in: number };
+    tokenCache = { token: j.access_token, expires: now + (j.expires_in - 60) * 1000 };
+    return j.access_token;
+  } catch (e) {
+    console.error("[flights] token fetch failed; backing off 60s:", e);
+    tokenCooldownUntil = now + 60_000;
+    return null;
+  }
+}
+
+async function fetchOpenSky(): Promise<Flight[]> {
+  const token = await getAccessToken();
+  const res = await fetch(OPENSKY, {
+    cache: "no-store",
+    headers: {
+      "User-Agent": UA,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error(`opensky ${res.status}`);
+  const data = (await res.json()) as { states: unknown[][] | null };
+  // index map: 0 icao24,1 callsign,2 country,3 time_pos,4 last_contact,5 lon,
+  // 6 lat,7 baro_alt,8 on_ground,9 velocity,10 true_track,11 vert_rate,13 geo_alt
+  return (data.states ?? [])
+    .map((s) => ({
+      id: String(s[0]),
+      callsign:
+        (String(s[1] ?? "").trim() || String(s[0])).toUpperCase(),
+      country: String(s[2] ?? ""),
+      lon: Number(s[5]),
+      lat: Number(s[6]),
+      altitude: Number(s[13] ?? s[7] ?? 0),
+      velocity: Number(s[9] ?? 0),
+      heading: Number(s[10] ?? 0),
+      verticalRate: Number(s[11] ?? 0),
+      onGround: Boolean(s[8]),
+      timePosition: (Number(s[3] ?? s[4]) || Date.now() / 1000) * 1000,
+    }))
+    .filter(
+      (f) =>
+        Number.isFinite(f.lon) &&
+        Number.isFinite(f.lat) &&
+        !(f.lon === 0 && f.lat === 0)
+    )
+    .slice(0, MAX_FLIGHTS);
+}
+
+// ============== fallback: free community ADS-B (radius-tiled) ===============
+const AL = "api.airplanes.live";
+const FI = "opendata.adsb.fi";
+const LOL = "api.adsb.lol";
+const REGIONS: [number, number, string][] = [
+  [50, 5, AL], [51, 0, FI], [41, 14, LOL], [58, 14, AL], [50, 25, FI],
+  [39, 33, LOL], [25, 52, AL], [-26, 28, FI], [40, -77, LOL], [29, -82, AL],
+  [32, -97, FI], [41, -88, LOL], [36, -119, AL], [47, -122, FI], [20, -99, LOL],
+  [-23, -46, AL], [22, 78, FI], [10, 100, LOL], [35, 138, AL], [25, 114, FI],
+  [-33, 151, LOL],
+];
+
+interface AdsbAc {
+  hex?: string; flight?: string; r?: string; t?: string; desc?: string;
+  lat?: number; lon?: number; gs?: number; track?: number; mag_heading?: number;
+  alt_baro?: number | "ground"; alt_geom?: number; baro_rate?: number;
+  geom_rate?: number; seen_pos?: number;
+}
+
+function mapAdsb(a: AdsbAc): Flight | null {
   if (typeof a.lat !== "number" || typeof a.lon !== "number") return null;
   const onGround = a.alt_baro === "ground";
   const altFt = onGround
@@ -99,18 +139,13 @@ function mapAircraft(a: AdsbAc): Flight | null {
   };
 }
 
-async function fetchRegion(
-  lat: number,
-  lon: number,
-  host: string
-): Promise<Flight[]> {
-  // each mirror uses a slightly different URL scheme for the same data
+async function fetchRegion(lat: number, lon: number, host: string): Promise<Flight[]> {
   const url =
     host === AL
       ? `https://${host}/v2/point/${lat}/${lon}/250`
       : host === FI
         ? `https://${host}/api/v2/lat/${lat}/lon/${lon}/dist/250`
-        : `https://${host}/v2/lat/${lat}/lon/${lon}/dist/250`; // adsb.lol
+        : `https://${host}/v2/lat/${lat}/lon/${lon}/dist/250`;
   const res = await fetch(url, {
     cache: "no-store",
     headers: { "User-Agent": UA, Accept: "application/json" },
@@ -118,48 +153,57 @@ async function fetchRegion(
   });
   if (!res.ok) throw new Error(`${host} ${res.status}`);
   const json = (await res.json()) as { ac?: AdsbAc[] };
-  return (json.ac ?? [])
-    .map(mapAircraft)
-    .filter((f): f is Flight => f !== null);
+  return (json.ac ?? []).map(mapAdsb).filter((f): f is Flight => f !== null);
 }
 
-export async function GET() {
-  if (cache && Date.now() - cache.ts < CACHE_TTL) {
-    return Response.json({ items: cache.items, source: "adsb", live: true });
-  }
-
+async function fetchAdsb(): Promise<Flight[]> {
   const results = await Promise.allSettled(
     REGIONS.map(([lat, lon, host]) => fetchRegion(lat, lon, host))
   );
-
-  // merge + dedupe by aircraft id
   const byId = new Map<string, Flight>();
   for (const r of results) {
-    if (r.status === "fulfilled") {
-      for (const f of r.value) byId.set(f.id, f);
-    }
+    if (r.status === "fulfilled") for (const f of r.value) byId.set(f.id, f);
   }
-
-  if (byId.size > 0) {
-    const items = [...byId.values()].slice(0, MAX_FLIGHTS);
-    cache = { items, ts: Date.now() };
-    return Response.json({ items, source: "adsb", live: true });
-  }
-
-  // everything failed — serve recent cache if we have it, else coherent sim
-  if (cache && Date.now() - cache.ts < 10 * 60 * 1000) {
-    return Response.json({ items: cache.items, source: "adsb-cached", live: true });
-  }
-  return Response.json({
-    items: syntheticFlights(),
-    source: "fallback",
-    live: false,
-  });
+  if (byId.size === 0) throw new Error("all adsb regions failed");
+  return [...byId.values()].slice(0, MAX_FLIGHTS);
 }
 
-// Deterministic, time-based synthetic feed. Each plane's position is a pure
-// function of the clock, so it's identical across requests and moves smoothly
-// (no per-request re-randomisation, which is what made the old one teleport).
+// ================================ handler ===================================
+export async function GET() {
+  const now = Date.now();
+  if (cache && now - cache.ts < FRESH_TTL) {
+    return Response.json({ items: cache.items, source: cache.source, live: true });
+  }
+
+  // primary: OpenSky global snapshot (full ~6k-13k in one call)
+  try {
+    const items = await fetchOpenSky();
+    if (items.length) {
+      cache = { items, ts: Date.now(), source: "opensky" };
+      return Response.json({ items, source: "opensky", live: true });
+    }
+  } catch (e) {
+    console.error("[flights] OpenSky failed, trying ADS-B:", e);
+  }
+
+  // fallback: tiled community ADS-B
+  try {
+    const items = await fetchAdsb();
+    cache = { items, ts: Date.now(), source: "adsb" };
+    return Response.json({ items, source: "adsb", live: true });
+  } catch (e) {
+    console.error("[flights] ADS-B failed:", e);
+  }
+
+  // serve a recent snapshot if we have one, else coherent synthetic
+  if (cache && now - cache.ts < STALE_TTL) {
+    return Response.json({ items: cache.items, source: `${cache.source}-cached`, live: true });
+  }
+  return Response.json({ items: syntheticFlights(), source: "fallback", live: false });
+}
+
+// Deterministic, time-based synthetic feed — identical across requests and
+// continuous, so it glides instead of teleporting.
 function syntheticFlights(): Flight[] {
   const t = Date.now() / 1000;
   const rand = (i: number, n: number) => {
@@ -170,8 +214,8 @@ function syntheticFlights(): Flight[] {
   for (let i = 0; i < 240; i++) {
     const lat = -55 + rand(i, 1) * 110;
     const lon0 = -180 + rand(i, 2) * 360;
-    const speed = 180 + rand(i, 3) * 120; // m/s
-    const dir = rand(i, 4) < 0.5 ? 1 : -1; // east / west
+    const speed = 180 + rand(i, 3) * 120;
+    const dir = rand(i, 4) < 0.5 ? 1 : -1;
     const cosLat = Math.cos((lat * Math.PI) / 180) || 1e-6;
     let lon = lon0 + (dir * speed * t) / (111_320 * cosLat);
     lon = ((((lon + 180) % 360) + 360) % 360) - 180;
