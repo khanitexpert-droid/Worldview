@@ -175,7 +175,17 @@ export async function GET() {
     return Response.json({ items: cache.items, source: cache.source, live: true });
   }
 
-  // primary: OpenSky global snapshot (full ~6k-13k in one call)
+  // primary: tiled community ADS-B (reliably reachable from Vercel)
+  try {
+    const items = await fetchAdsb();
+    cache = { items, ts: Date.now(), source: "adsb" };
+    return Response.json({ items, source: "adsb", live: true });
+  } catch (e) {
+    console.error("[flights] ADS-B failed, trying OpenSky:", e);
+  }
+
+  // last-ditch: OpenSky global snapshot (usually blocked from Vercel, but
+  // full-global when reachable — e.g. local dev or other hosts)
   try {
     const items = await fetchOpenSky();
     if (items.length) {
@@ -183,16 +193,7 @@ export async function GET() {
       return Response.json({ items, source: "opensky", live: true });
     }
   } catch (e) {
-    console.error("[flights] OpenSky failed, trying ADS-B:", e);
-  }
-
-  // fallback: tiled community ADS-B
-  try {
-    const items = await fetchAdsb();
-    cache = { items, ts: Date.now(), source: "adsb" };
-    return Response.json({ items, source: "adsb", live: true });
-  } catch (e) {
-    console.error("[flights] ADS-B failed:", e);
+    console.error("[flights] OpenSky failed:", e);
   }
 
   // serve a recent snapshot if we have one, else coherent synthetic
