@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 // Vercel defaults serverless functions to 10s; the auth + ~1.7MB global feed
 // from OpenSky's EU servers (plus cold start) can exceed that. Give it room.
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // OpenSky "all states" feed.
 // - Anonymous works but is heavily rate-limited (you get throttled fast).
@@ -39,7 +39,7 @@ async function getAccessToken(): Promise<string | null> {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
     cache: "no-store",
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`opensky auth ${res.status}`);
   const json = (await res.json()) as { access_token: string; expires_in: number };
@@ -52,8 +52,17 @@ async function getAccessToken(): Promise<string | null> {
 }
 
 export async function GET() {
+  // Don't let an auth failure kill the request — if the OAuth token can't be
+  // fetched (OpenSky's auth server is flaky from some datacenters), still try
+  // an anonymous (rate-limited) states call rather than giving up entirely.
+  let token: string | null = null;
   try {
-    const token = await getAccessToken();
+    token = await getAccessToken();
+  } catch (e) {
+    console.error("[flights] OpenSky auth failed, trying anonymous:", e);
+  }
+
+  try {
     const res = await fetch(OPENSKY, {
       cache: "no-store",
       headers: {
