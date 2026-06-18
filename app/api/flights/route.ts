@@ -11,18 +11,41 @@ export const maxDuration = 30;
 const UA = "worldview-clone/1.0";
 const MAX_FLIGHTS = 6000;
 
-// [lat, lon, host] — alternated across the two mirrors to spread rate limits.
+// Three free ADS-B mirrors (same data, different URL schemes). Anchor points
+// are round-robined across them so each mirror gets ~1/3 of the requests,
+// staying under their ~1 req/sec rate limits.
 const AL = "api.airplanes.live";
 const FI = "opendata.adsb.fi";
+const LOL = "api.adsb.lol";
+
+// [lat, lon, host] — 250nm-radius queries tiling the busy regions of the globe.
 const REGIONS: [number, number, string][] = [
-  [50, 5, AL], // Europe (west/central)
-  [40, -77, FI], // US northeast
-  [37, -120, AL], // US west
-  [25, 52, FI], // Gulf / Middle East
-  [8, 100, AL], // Southeast Asia
-  [35, 132, FI], // East Asia (Japan/Korea)
-  [22, 78, AL], // South Asia (India)
-  [-26, 28, FI], // Southern Africa
+  // Europe
+  [50, 5, AL], // west/central Europe
+  [51, 0, FI], // UK / London
+  [41, 14, LOL], // Mediterranean / Italy
+  [58, 14, AL], // Scandinavia
+  [50, 25, FI], // eastern Europe
+  [39, 33, LOL], // Turkey
+  // Middle East / Africa
+  [25, 52, AL], // Gulf
+  [-26, 28, FI], // southern Africa
+  // North America
+  [40, -77, LOL], // US northeast
+  [29, -82, AL], // US southeast / Florida
+  [32, -97, FI], // US central / Texas
+  [41, -88, LOL], // US midwest / Chicago
+  [36, -119, AL], // US west / California
+  [47, -122, FI], // US northwest / Seattle
+  [20, -99, LOL], // Mexico
+  // South America
+  [-23, -46, AL], // Brazil / São Paulo
+  // Asia / Oceania
+  [22, 78, FI], // South Asia / India
+  [10, 100, LOL], // Southeast Asia
+  [35, 138, AL], // East Asia / Japan
+  [25, 114, FI], // China / Hong Kong
+  [-33, 151, LOL], // Australia east
 ];
 
 interface AdsbAc {
@@ -81,11 +104,13 @@ async function fetchRegion(
   lon: number,
   host: string
 ): Promise<Flight[]> {
-  // the two mirrors use different URL schemes for the same data
+  // each mirror uses a slightly different URL scheme for the same data
   const url =
     host === AL
       ? `https://${host}/v2/point/${lat}/${lon}/250`
-      : `https://${host}/api/v2/lat/${lat}/lon/${lon}/dist/250`;
+      : host === FI
+        ? `https://${host}/api/v2/lat/${lat}/lon/${lon}/dist/250`
+        : `https://${host}/v2/lat/${lat}/lon/${lon}/dist/250`; // adsb.lol
   const res = await fetch(url, {
     cache: "no-store",
     headers: { "User-Agent": UA, Accept: "application/json" },
