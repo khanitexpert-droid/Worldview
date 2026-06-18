@@ -24,18 +24,20 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
           : vs < -0.3
             ? `▼ ${Math.abs(vs).toFixed(1)} m/s`
             : "LEVEL";
-      return {
-        title: e.callsign,
-        rows: [
-          ["STATUS", e.onGround ? "ON GROUND" : "AIRBORNE"],
-          ["ORIGIN", e.country],
-          ["ALT", `${Math.round(e.altitude).toLocaleString()} m`],
-          ["SPD", `${knots} kn`],
-          ["HDG", `${Math.round(e.heading)}°`],
-          ["V/S", vsStr],
-          ["ICAO", e.id.toUpperCase()],
-        ],
-      };
+      const rows: [string, React.ReactNode][] = [
+        ["STATUS", e.onGround ? "ON GROUND" : "AIRBORNE"],
+      ];
+      if (e.aircraftType) rows.push(["TYPE", e.aircraftType]);
+      if (e.registration) rows.push(["REG", e.registration]);
+      if (e.country) rows.push(["ORIGIN", e.country]);
+      rows.push(
+        ["ALT", `${Math.round(e.altitude).toLocaleString()} m`],
+        ["SPD", `${knots} kn`],
+        ["HDG", `${Math.round(e.heading)}°`],
+        ["V/S", vsStr],
+        ["ICAO", e.id.toUpperCase()]
+      );
+      return { title: e.callsign, rows };
     }
     case "ships":
       return {

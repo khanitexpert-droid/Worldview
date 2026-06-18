@@ -2,161 +2,163 @@ import type { Flight } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-// Vercel defaults serverless functions to 10s; the auth + ~1.7MB global feed
-// from OpenSky's EU servers (plus cold start) can exceed that. Give it room.
-export const maxDuration = 60;
+export const maxDuration = 30;
 
-// OpenSky "all states" feed.
-// - Anonymous works but is heavily rate-limited (you get throttled fast).
-// - With an API client (OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET) we use
-//   OAuth2 client-credentials for far higher limits + the full global feed.
-//   https://openskynetwork.github.io/opensky-api/rest.html
-const OPENSKY = "https://opensky-network.org/api/states/all";
-const OPENSKY_TOKEN_URL =
-  "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
-
-// How many aircraft to ship to the client. The globe handles a lot of moving
-// points; the original site tracks ~6.5k.
+// Live ADS-B from community feeds (airplanes.live / adsb.fi). No login — so,
+// unlike OpenSky, these aren't blocked from datacenter IPs like Vercel's.
+// They're radius-limited (max 250nm/point), so we query several anchor points
+// across the busy regions of the globe and merge them. Same response shape.
+const UA = "worldview-clone/1.0";
 const MAX_FLIGHTS = 6000;
 
-// OAuth token cache (module scope persists across requests on a warm lambda).
-let tokenCache: { token: string; expires: number } | null = null;
-// OpenSky's token server rate-limits hard; if a fetch fails, back off rather
-// than hammering it on every request (which makes the throttling worse).
-let tokenCooldownUntil = 0;
+// [lat, lon, host] — alternated across the two mirrors to spread rate limits.
+const AL = "api.airplanes.live";
+const FI = "opendata.adsb.fi";
+const REGIONS: [number, number, string][] = [
+  [50, 5, AL], // Europe (west/central)
+  [40, -77, FI], // US northeast
+  [37, -120, AL], // US west
+  [25, 52, FI], // Gulf / Middle East
+  [8, 100, AL], // Southeast Asia
+  [35, 132, FI], // East Asia (Japan/Korea)
+  [22, 78, AL], // South Asia (India)
+  [-26, 28, FI], // Southern Africa
+];
 
-// Last successful live feed. Served on transient OpenSky failures so the map
-// keeps showing real aircraft instead of dropping to synthetic placeholders.
-let lastGood: { items: Flight[]; ts: number } | null = null;
-const LAST_GOOD_TTL = 10 * 60 * 1000; // 10 min
+interface AdsbAc {
+  hex?: string;
+  flight?: string;
+  r?: string;
+  t?: string;
+  desc?: string;
+  lat?: number;
+  lon?: number;
+  gs?: number; // ground speed, knots
+  track?: number; // deg
+  mag_heading?: number;
+  alt_baro?: number | "ground";
+  alt_geom?: number;
+  baro_rate?: number; // ft/min
+  geom_rate?: number;
+  seen_pos?: number; // seconds since position seen
+}
 
-async function getAccessToken(): Promise<string | null> {
-  const id = process.env.OPENSKY_CLIENT_ID;
-  const secret = process.env.OPENSKY_CLIENT_SECRET;
-  if (!id || !secret) return null;
+const FT_TO_M = 0.3048;
+const KN_TO_MS = 0.514444;
 
-  const now = Date.now();
-  if (tokenCache && now < tokenCache.expires) return tokenCache.token;
-  if (now < tokenCooldownUntil) return null; // recently failed — back off
+// in-memory cache so repeated client polls don't re-hit the feeds every time
+let cache: { items: Flight[]; ts: number } | null = null;
+const CACHE_TTL = 8000;
 
-  try {
-    const res = await fetch(OPENSKY_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: id,
-        client_secret: secret,
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) throw new Error(`auth ${res.status}`);
-    const json = (await res.json()) as {
-      access_token: string;
-      expires_in: number;
-    };
-    tokenCache = {
-      token: json.access_token,
-      expires: now + (json.expires_in - 60) * 1000, // refresh a min early
-    };
-    return json.access_token;
-  } catch (e) {
-    console.error("[flights] token fetch failed; backing off 60s:", e);
-    tokenCooldownUntil = now + 60_000;
-    return null;
-  }
+function mapAircraft(a: AdsbAc): Flight | null {
+  if (typeof a.lat !== "number" || typeof a.lon !== "number") return null;
+  const onGround = a.alt_baro === "ground";
+  const altFt = onGround
+    ? 0
+    : typeof a.alt_baro === "number"
+      ? a.alt_baro
+      : (a.alt_geom ?? 0);
+  return {
+    id: a.hex ?? `${a.lat},${a.lon}`,
+    callsign:
+      (a.flight ?? "").trim() || (a.r ?? "").trim() || (a.hex ?? "").toUpperCase(),
+    country: "",
+    lon: a.lon,
+    lat: a.lat,
+    altitude: altFt * FT_TO_M,
+    velocity: (a.gs ?? 0) * KN_TO_MS,
+    heading: a.track ?? a.mag_heading ?? 0,
+    verticalRate: ((a.baro_rate ?? a.geom_rate ?? 0) * FT_TO_M) / 60,
+    onGround,
+    timePosition: Date.now() - (a.seen_pos ?? 0) * 1000,
+    aircraftType: a.desc || a.t || undefined,
+    registration: (a.r ?? "").trim() || undefined,
+  };
+}
+
+async function fetchRegion(
+  lat: number,
+  lon: number,
+  host: string
+): Promise<Flight[]> {
+  // the two mirrors use different URL schemes for the same data
+  const url =
+    host === AL
+      ? `https://${host}/v2/point/${lat}/${lon}/250`
+      : `https://${host}/api/v2/lat/${lat}/lon/${lon}/dist/250`;
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers: { "User-Agent": UA, Accept: "application/json" },
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!res.ok) throw new Error(`${host} ${res.status}`);
+  const json = (await res.json()) as { ac?: AdsbAc[] };
+  return (json.ac ?? [])
+    .map(mapAircraft)
+    .filter((f): f is Flight => f !== null);
 }
 
 export async function GET() {
-  const token = await getAccessToken();
-
-  try {
-    const res = await fetch(OPENSKY, {
-      cache: "no-store",
-      headers: {
-        "User-Agent": "worldview-clone/1.0",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      signal: AbortSignal.timeout(20000),
-    });
-    if (!res.ok) throw new Error(`opensky ${res.status}`);
-    const data = (await res.json()) as { states: unknown[][] | null };
-
-    const items: Flight[] = (data.states ?? [])
-      // OpenSky state vector indices:
-      // 0 icao24, 1 callsign, 2 origin_country, 3 time_position,
-      // 4 last_contact, 5 lon, 6 lat, 7 baro_alt, 8 on_ground, 9 velocity,
-      // 10 true_track, 11 vertical_rate, 13 geo_alt
-      .map((s) => ({
-        id: String(s[0]),
-        callsign: (String(s[1] ?? "").trim() || "UNKNOWN").toUpperCase(),
-        country: String(s[2] ?? "—"),
-        lon: Number(s[5]),
-        lat: Number(s[6]),
-        altitude: Number(s[13] ?? s[7] ?? 0),
-        velocity: Number(s[9] ?? 0),
-        heading: Number(s[10] ?? 0),
-        verticalRate: Number(s[11] ?? 0),
-        onGround: Boolean(s[8]),
-        timePosition: (Number(s[3] ?? s[4]) || Date.now() / 1000) * 1000,
-      }))
-      .filter(
-        (f) =>
-          Number.isFinite(f.lon) &&
-          Number.isFinite(f.lat) &&
-          !(f.lon === 0 && f.lat === 0)
-      )
-      .slice(0, MAX_FLIGHTS);
-
-    if (items.length) lastGood = { items, ts: Date.now() };
-
-    return Response.json({
-      items,
-      source: token ? "opensky-auth" : "opensky-anon",
-      live: true,
-    });
-  } catch (err) {
-    // Serve the last real feed if we have a recent one — much better than
-    // flipping the whole map back to synthetic on a transient hiccup.
-    if (lastGood && Date.now() - lastGood.ts < LAST_GOOD_TTL) {
-      return Response.json({
-        items: lastGood.items,
-        source: "opensky-cached",
-        live: true,
-        error: String(err),
-      });
-    }
-    return Response.json({
-      items: syntheticFlights(),
-      source: "fallback",
-      live: false,
-      error: String(err),
-    });
+  if (cache && Date.now() - cache.ts < CACHE_TTL) {
+    return Response.json({ items: cache.items, source: "adsb", live: true });
   }
+
+  const results = await Promise.allSettled(
+    REGIONS.map(([lat, lon, host]) => fetchRegion(lat, lon, host))
+  );
+
+  // merge + dedupe by aircraft id
+  const byId = new Map<string, Flight>();
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      for (const f of r.value) byId.set(f.id, f);
+    }
+  }
+
+  if (byId.size > 0) {
+    const items = [...byId.values()].slice(0, MAX_FLIGHTS);
+    cache = { items, ts: Date.now() };
+    return Response.json({ items, source: "adsb", live: true });
+  }
+
+  // everything failed — serve recent cache if we have it, else coherent sim
+  if (cache && Date.now() - cache.ts < 10 * 60 * 1000) {
+    return Response.json({ items: cache.items, source: "adsb-cached", live: true });
+  }
+  return Response.json({
+    items: syntheticFlights(),
+    source: "fallback",
+    live: false,
+  });
 }
 
+// Deterministic, time-based synthetic feed. Each plane's position is a pure
+// function of the clock, so it's identical across requests and moves smoothly
+// (no per-request re-randomisation, which is what made the old one teleport).
 function syntheticFlights(): Flight[] {
-  const hubs: [number, number, string][] = [
-    [-0.45, 51.47, "EGLL"],
-    [-73.78, 40.64, "KJFK"],
-    [139.78, 35.55, "RJTT"],
-    [55.36, 25.25, "OMDB"],
-    [2.55, 49.0, "LFPG"],
-    [103.99, 1.36, "WSSS"],
-  ];
+  const t = Date.now() / 1000;
+  const rand = (i: number, n: number) => {
+    const x = Math.sin(i * 12.9898 + n * 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  };
   const out: Flight[] = [];
   for (let i = 0; i < 240; i++) {
-    const [hlon, hlat] = hubs[i % hubs.length];
+    const lat = -55 + rand(i, 1) * 110;
+    const lon0 = -180 + rand(i, 2) * 360;
+    const speed = 180 + rand(i, 3) * 120; // m/s
+    const dir = rand(i, 4) < 0.5 ? 1 : -1; // east / west
+    const cosLat = Math.cos((lat * Math.PI) / 180) || 1e-6;
+    let lon = lon0 + (dir * speed * t) / (111_320 * cosLat);
+    lon = ((((lon + 180) % 360) + 360) % 360) - 180;
     out.push({
       id: `SIM${i}`,
-      callsign: `WV${String(100 + i)}`,
+      callsign: `WV${100 + i}`,
       country: "SIMULATED",
-      lon: hlon + (Math.random() - 0.5) * 40,
-      lat: hlat + (Math.random() - 0.5) * 30,
-      altitude: 8000 + Math.random() * 4000,
-      velocity: 180 + Math.random() * 80,
-      heading: Math.random() * 360,
+      lon,
+      lat,
+      altitude: 8000 + rand(i, 5) * 4000,
+      velocity: speed,
+      heading: dir > 0 ? 90 : 270,
       verticalRate: 0,
       onGround: false,
       timePosition: Date.now(),

@@ -7,7 +7,7 @@ const BOOT_LINES: { text: string; tone?: "magenta" | "cyan" }[] = [
   { text: "ESTABLISHING SECURE UPLINK" },
   { text: "INITIALISING CESIUM 3D RENDER CORE" },
   { text: "MOUNTING ORBITAL IMAGERY TILES" },
-  { text: "LINKING OPENSKY ADS-B NETWORK" },
+  { text: "LINKING GLOBAL ADS-B NETWORK" },
   { text: "PROPAGATING CELESTRAK TLE CATALOG" },
   { text: "TAPPING USGS SEISMIC BACKBONE" },
   { text: "SYNCING AIS MARITIME RELAY" },

@@ -18,7 +18,7 @@ export const LAYERS: LayerMeta[] = [
     short: "ACFT",
     icon: "✈",
     color: "#ff2d95",
-    source: "OPENSKY NETWORK",
+    source: "ADS-B NETWORK",
     defaultOn: true,
   },
   {

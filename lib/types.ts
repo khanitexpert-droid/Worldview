@@ -18,8 +18,10 @@ export interface Flight {
   velocity: number; // m/s (ground speed)
   verticalRate: number; // m/s (+climb / -descent)
   onGround: boolean;
-  country: string; // origin country
+  country: string; // origin country (may be "" for ADS-B sources)
   timePosition: number; // epoch ms of this position fix (for accurate propagation)
+  aircraftType?: string; // e.g. "AIRBUS A-320neo" / "A20N"
+  registration?: string; // e.g. "G-UZHK"
 }
 
 export interface Satellite {
