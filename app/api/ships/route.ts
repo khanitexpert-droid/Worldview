@@ -15,7 +15,7 @@ export const maxDuration = 20;
 // a coherent synthetic feed if the key is missing or the stream fails.
 // ============================================================================
 
-const GATHER_MS = 6000; // how long to listen before returning a snapshot
+const GATHER_MS = 4500; // how long to listen before returning a snapshot
 const MAX_SHIPS = 4000;
 const FRESH_TTL = 30_000;
 const STALE_TTL = 10 * 60_000;
