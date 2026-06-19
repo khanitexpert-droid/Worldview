@@ -36,7 +36,7 @@ export const LAYERS: LayerMeta[] = [
     short: "SATS",
     icon: "🛰",
     color: "#b14bff",
-    source: "CELESTRAK",
+    source: "CELESTRAK · LEO+GEO",
     defaultOn: true,
   },
   {

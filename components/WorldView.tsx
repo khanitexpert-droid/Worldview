@@ -16,6 +16,7 @@ import {
   fetchTraffic,
 } from "@/lib/feeds";
 import type { Flight, Ship, FeedEntity, LayerId } from "@/lib/types";
+import { SatelliteField } from "@/lib/satField";
 
 import TopBar from "./hud/TopBar";
 import Controls from "./hud/Controls";
@@ -58,24 +59,26 @@ const SHIP_DOT_IMAGE = `data:image/svg+xml,${encodeURIComponent(SHIP_DOT_SVG)}`;
 // below this ground speed (m/s ≈ 0.6 kn) a vessel is treated as stationary
 const SHIP_MOVING_MS = 0.3;
 
-const POLL_MS: Record<LayerId, number> = {
+// satellites are propagated client-side every frame by SatelliteField, so they
+// opt out of the generic poll/render pipeline entirely.
+type PollLayerId = Exclude<LayerId, "satellites">;
+
+const POLL_MS: Record<PollLayerId, number> = {
   flights: 15000,
   // ships refresh slowly upstream (VesselAPI free-tier quota) and the client
   // dead-reckons between snapshots, so polling often just re-fetches the cache.
   ships: 60000,
-  satellites: 10000,
   earthquakes: 60000,
   cctv: 60000,
   traffic: 15000,
 };
 
 const FETCHERS: Record<
-  LayerId,
+  PollLayerId,
   () => Promise<{ items: unknown[]; source?: string }>
 > = {
   flights: fetchFlights,
   ships: fetchShips,
-  satellites: fetchSatellites,
   earthquakes: fetchEarthquakes,
   cctv: fetchCctv,
   traffic: fetchTraffic,
@@ -83,7 +86,7 @@ const FETCHERS: Record<
 
 // layers handled by the generic (snap-on-poll) renderer — flights and ships are
 // special (interpolated every frame), so they're excluded here.
-const STATIC_LAYERS = (Object.keys(FETCHERS) as LayerId[]).filter(
+const STATIC_LAYERS = (Object.keys(FETCHERS) as PollLayerId[]).filter(
   (id) => id !== "flights" && id !== "ships"
 );
 
@@ -175,24 +178,6 @@ function renderLayer(
 ) {
   ds.entities.removeAll();
 
-  if (id === "satellites") {
-    for (const s of items as import("@/lib/types").Satellite[]) {
-      const eid = `satellites:${s.id}`;
-      ds.entities.add({
-        id: eid,
-        position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, s.altKm * 1000),
-        point: {
-          pixelSize: 4,
-          color: C.violet,
-          outlineColor: C.cyan,
-          outlineWidth: 1,
-        },
-      });
-      sel.set(eid, { kind: "satellites", ...s });
-    }
-    return;
-  }
-
   if (id === "earthquakes") {
     for (const q of items as import("@/lib/types").Earthquake[]) {
       const eid = `earthquakes:${q.id}`;
@@ -264,6 +249,10 @@ export default function WorldView() {
   // ---- ship interpolation state ----
   const shipDsRef = useRef<Cesium.CustomDataSource | null>(null);
   const shipStateRef = useRef<Map<string, ShipState>>(new Map());
+  // ---- satellite swarm (own primitive collection + per-frame SGP4) ----
+  const satFieldRef = useRef<SatelliteField | null>(null);
+  const satLoadedRef = useRef(false);
+  const satRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTickRef = useRef(0);
   // once we've seen a real feed, ignore synthetic-fallback polls so the map
   // doesn't flip-flop between thousands of real planes and 240 placeholders.
@@ -281,9 +270,14 @@ export default function WorldView() {
 
   const layers = useWorldView((s) => s.layers);
   const setSelected = useWorldView((s) => s.setSelected);
+  const updateSelected = useWorldView((s) => s.updateSelected);
   const setCount = useWorldView((s) => s.setCount);
   const pushIntel = useWorldView((s) => s.pushIntel);
   const setCursor = useWorldView((s) => s.setCursor);
+  const satOrbits = useWorldView((s) => s.satOrbits);
+  const satCounts = useWorldView((s) => s.satCounts);
+  const setSatCounts = useWorldView((s) => s.setSatCounts);
+  const setSatMeta = useWorldView((s) => s.setSatMeta);
 
   // ---- init viewer once ----
   useEffect(() => {
@@ -346,6 +340,9 @@ export default function WorldView() {
     const shipDs = new Cesium.CustomDataSource("ships-live");
     viewer.dataSources.add(shipDs);
     shipDsRef.current = shipDs;
+
+    // satellite swarm — manages its own PointPrimitiveCollection + preRender loop
+    satFieldRef.current = new SatelliteField(scene);
 
     // ---- per-frame: dead-reckon the truth target, ease the display to it ----
     lastTickRef.current = performance.now();
@@ -412,7 +409,35 @@ export default function WorldView() {
     const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
     handler.setInputAction((click: { position: Cesium.Cartesian2 }) => {
       const picked = scene.pick(click.position);
-      const pid = picked?.id?.id as string | undefined;
+      // entities expose an Entity (with .id); point primitives expose the raw
+      // string id we attached. Normalize both to a string key.
+      const obj = picked?.id;
+      const pid =
+        typeof obj === "string" ? obj : (obj?.id as string | undefined);
+
+      // satellites live in a primitive collection, not selMap — build their
+      // FeedEntity on the fly from the live propagator.
+      if (pid && pid.startsWith("satellites:")) {
+        const norad = pid.slice("satellites:".length);
+        const field = satFieldRef.current;
+        const g = field?.geodeticNow(norad);
+        const rec = field?.recordFor(norad);
+        if (g && rec) {
+          setSelected({
+            kind: "satellites",
+            id: norad,
+            name: rec.name,
+            orbit: rec.orbit,
+            lon: g.lon,
+            lat: g.lat,
+            altKm: g.altKm,
+          });
+        } else {
+          setSelected(null);
+        }
+        return;
+      }
+
       if (pid && selMapRef.current.has(pid)) {
         setSelected(selMapRef.current.get(pid)!);
       } else {
@@ -446,6 +471,8 @@ export default function WorldView() {
     return () => {
       viewer.clock.onTick.removeEventListener(onTick);
       handler.destroy();
+      satFieldRef.current?.destroy();
+      satFieldRef.current = null;
       viewer.destroy();
       viewerRef.current = null;
     };
@@ -457,7 +484,7 @@ export default function WorldView() {
     if (!ready) return;
     const timers: ReturnType<typeof setInterval>[] = [];
 
-    (Object.keys(FETCHERS) as LayerId[]).forEach((id) => {
+    (Object.keys(FETCHERS) as PollLayerId[]).forEach((id) => {
       if (!layers[id]) {
         // clear disabled layer data
         setData((d) => (d[id].length ? { ...d, [id]: [] } : d));
@@ -700,6 +727,57 @@ export default function WorldView() {
     }
   }, [data.ships, layers.ships, ready]);
 
+  // ---- satellites: pull the TLE catalogue once; the field animates it ----
+  useEffect(() => {
+    if (!ready || !layers.satellites || satLoadedRef.current) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const res = await fetchSatellites();
+        if (cancelled || !satFieldRef.current) return;
+        setSatMeta({
+          source: res.source,
+          fetchedAt: res.fetchedAt,
+          total: res.counts.total,
+          live: res.live,
+        });
+        // an empty payload means every upstream was unreachable — surface it and
+        // retry shortly rather than locking in a permanent empty state.
+        if (res.items.length === 0) {
+          pushIntel("SATELLITE CATALOG UNAVAILABLE — RETRYING", "warn");
+          satRetryRef.current = setTimeout(run, 15000);
+          return;
+        }
+        satFieldRef.current.load(res.items);
+        satLoadedRef.current = true;
+        setSatCounts({ LEO: res.counts.LEO, GEO: res.counts.GEO });
+        pushIntel(
+          `CELESTRAK · ${res.counts.total.toLocaleString()} ORBITAL CONTACTS ` +
+            `(LEO ${res.counts.LEO.toLocaleString()} · GEO ${res.counts.GEO})`,
+          res.live ? "info" : "warn"
+        );
+      } catch (err) {
+        pushIntel("SATELLITE TLE FEED ERROR — RETRYING", "alert");
+        console.error("[worldview] satellites fetch failed", err);
+        if (!cancelled) satRetryRef.current = setTimeout(run, 15000);
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+      if (satRetryRef.current) clearTimeout(satRetryRef.current);
+    };
+  }, [ready, layers.satellites, setSatCounts, setSatMeta, pushIntel]);
+
+  // ---- satellites: master + per-orbit visibility, and the contact count ----
+  useEffect(() => {
+    if (!ready) return;
+    satFieldRef.current?.setVisibility(layers.satellites, satOrbits);
+    const visible =
+      (satOrbits.LEO ? satCounts.LEO : 0) + (satOrbits.GEO ? satCounts.GEO : 0);
+    setCount("satellites", layers.satellites ? visible : 0);
+  }, [ready, layers.satellites, satOrbits, satCounts, setCount]);
+
   // ---- render the snap-on-poll layers when data/layers change ----
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -809,11 +887,26 @@ export default function WorldView() {
       });
       return;
     }
-    const e = selected as unknown as { lon: number; lat: number; altKm?: number };
-    const height =
-      selected.kind === "satellites" ? (selected.altKm ?? 0) * 1000 : 0;
+    // for an orbiting satellite, track its live interpolated position
+    if (selected.kind === "satellites") {
+      const norad = selected.id;
+      ds.entities.add({
+        position: new Cesium.CallbackPositionProperty(
+          () => satFieldRef.current?.liveCartesian(norad) ?? Cesium.Cartesian3.ZERO,
+          false
+        ),
+        point: {
+          pixelSize: 22,
+          color: Cesium.Color.TRANSPARENT,
+          outlineColor: C.cyan,
+          outlineWidth: 2,
+        },
+      });
+      return;
+    }
+    const e = selected as unknown as { lon: number; lat: number };
     ds.entities.add({
-      position: Cesium.Cartesian3.fromDegrees(e.lon, e.lat, height),
+      position: Cesium.Cartesian3.fromDegrees(e.lon, e.lat, 0),
       point: {
         pixelSize: 24,
         color: Cesium.Color.TRANSPARENT,
@@ -821,7 +914,33 @@ export default function WorldView() {
         outlineWidth: 2,
       },
     });
-  }, [selected]);
+    // depend on identity (kind+id), not the object — a tracked satellite's
+    // readout is refreshed in place every couple seconds and we don't want to
+    // tear down / rebuild the marker each time.
+  }, [selected?.kind, selected?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // keep the selected satellite's lat/lon/alt readout live as it moves
+  useEffect(() => {
+    if (selected?.kind !== "satellites") return;
+    const norad = selected.id;
+    const iv = setInterval(() => {
+      const field = satFieldRef.current;
+      const g = field?.geodeticNow(norad);
+      const rec = field?.recordFor(norad);
+      if (g && rec) {
+        updateSelected({
+          kind: "satellites",
+          id: norad,
+          name: rec.name,
+          orbit: rec.orbit,
+          lon: g.lon,
+          lat: g.lat,
+          altKm: g.altKm,
+        });
+      }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [selected?.kind, selected?.id, updateSelected]);
 
   return (
     <div className="relative h-full w-full overflow-hidden">

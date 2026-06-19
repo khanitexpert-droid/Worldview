@@ -68,7 +68,10 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
       return {
         title: e.name,
         rows: [
-          ["TYPE", "SATELLITE"],
+          [
+            "ORBIT",
+            e.orbit === "GEO" ? "GEOSTATIONARY (GEO)" : "LOW EARTH (LEO)",
+          ],
           ["ALT", `${e.altKm.toLocaleString()} km`],
           ["NORAD", e.id],
         ],
@@ -189,7 +192,9 @@ export default function EntityBody({
             onFlyTo(
               e.lon,
               e.lat,
-              selected.kind === "satellites" ? 8_000_000 : 400_000
+              selected.kind === "satellites"
+                ? ((e.altKm ?? 500) + 3000) * 1000
+                : 400_000
             )
           }
           className="mt-3 w-full border border-wv-border py-1.5 text-[10px] font-bold tracking-[0.2em] text-wv-text transition-colors hover:border-wv-cyan hover:text-wv-cyan hover:box-glow-cyan"

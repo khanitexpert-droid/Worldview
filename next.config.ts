@@ -10,7 +10,7 @@ import type { NextConfig } from "next";
 //   turbopack config" notice during `next dev` (which still uses Turbopack).
 const nextConfig: NextConfig = {
   turbopack: {},
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, webpack }) => {
     config.optimization.minimize = false;
     if (!isServer) {
       config.resolve.fallback = {
@@ -22,6 +22,16 @@ const nextConfig: NextConfig = {
         url: false,
       };
     }
+    // satellite.js v7 lazily `import()`s a WASM bulk-propagator runtime
+    // (`#wasm-single-thread` / `#wasm-multi-thread`) that pulls in
+    // node:worker_threads / node:module — not bundlable for the browser. We only
+    // use its pure-JS SGP4 path, so stop webpack from trying to bundle those
+    // WASM entry points (the dynamic import is never executed at runtime).
+    config.plugins.push(
+      new webpack.IgnorePlugin({
+        resourceRegExp: /^#wasm-(single|multi)-thread$/,
+      })
+    );
     return config;
   },
 };

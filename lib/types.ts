@@ -24,12 +24,31 @@ export interface Flight {
   registration?: string; // e.g. "G-UZHK"
 }
 
+/** Orbit class we render. We deliberately track only LEO + GEO. */
+export type SatOrbit = "LEO" | "GEO";
+
+/** A satellite as it appears on the globe / in the detail panel. */
 export interface Satellite {
-  id: string;
+  id: string; // NORAD catalog number
   name: string;
   lon: number;
   lat: number;
   altKm: number;
+  orbit: SatOrbit;
+}
+
+/**
+ * Raw orbital element set served by /api/satellites. The client builds a
+ * propagator from the TLE lines and animates the satellite itself, so the
+ * server never ships per-frame positions — only the (slowly changing) TLEs.
+ */
+export interface SatelliteTle {
+  id: string; // NORAD catalog number
+  name: string;
+  l1: string; // TLE line 1
+  l2: string; // TLE line 2
+  orbit: SatOrbit;
+  altKm: number; // mean altitude, for the detail panel / sorting
 }
 
 export interface Earthquake {
