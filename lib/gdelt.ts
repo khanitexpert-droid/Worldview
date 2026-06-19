@@ -114,8 +114,16 @@ export interface EventsResult {
   fetchedAt: string;
 }
 
-const QUERY_GAP_MS = 5500; // GDELT throttles to 1 request / 5 s per IP
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Rolling cache of recently-seen articles, accumulated across polls (see
+// fetchGdeltEventsDirect). Lets us build broad coverage from just ONE request
+// per poll instead of several at once — firing multiple queries per load trips
+// GDELT's 1-request-per-5s-per-IP limit and gets the visitor's own IP throttled.
+interface SeenArticle extends GdeltArticle {
+  _seen: number;
+}
+const rolling = new Map<string, SeenArticle>();
+const ROLL_TTL_MS = 30 * 60_000; // drop articles not re-seen within 30 min
+let queryIdx = 0;
 
 async function fetchOne(query: string): Promise<GdeltArticle[]> {
   const res = await fetch(buildDocUrl(query), { cache: "no-store" });
@@ -128,31 +136,36 @@ async function fetchOne(query: string): Promise<GdeltArticle[]> {
 }
 
 /**
- * Fetch + aggregate straight from the browser (visitor's residential IP). This
- * is the primary path — it sidesteps GDELT's datacenter-IP throttling that makes
- * the Vercel server route unreliable. Fires several queries in sequence (spaced
- * for the 1-req/5s limit) and merges them for much broader country coverage;
- * a throttled query is skipped rather than failing the whole load. Throws only
- * if every query failed, so the caller can fall back to the server route.
+ * Fetch + aggregate straight from the browser (visitor's residential IP) — this
+ * sidesteps GDELT's datacenter-IP throttling that makes the Vercel server route
+ * unreliable. Fires exactly ONE query per call (rotating through QUERIES) and
+ * merges it into a rolling cache, so coverage broadens over a few polls without
+ * ever exceeding GDELT's 1-request-per-5s-per-IP limit. A throttled poll keeps
+ * showing the accumulated data; it only throws (so the caller can fall back to
+ * the server route) when we have nothing cached yet.
  */
 export async function fetchGdeltEventsDirect(): Promise<EventsResult> {
-  const merged = new Map<string, GdeltArticle>(); // dedupe by url across queries
-  let ok = 0;
-  for (let i = 0; i < QUERIES.length; i++) {
-    if (i > 0) await wait(QUERY_GAP_MS); // stay under GDELT's per-IP rate limit
-    try {
-      for (const a of await fetchOne(QUERIES[i])) {
-        if (a.url) merged.set(a.url, a);
-      }
-      ok++;
-    } catch {
-      // a throttled/failed query is fine — keep whatever the others returned
+  const now = Date.now();
+  const query = QUERIES[queryIdx % QUERIES.length];
+  queryIdx++;
+
+  try {
+    for (const a of await fetchOne(query)) {
+      if (a.url) rolling.set(a.url, { ...a, _seen: now });
     }
+  } catch (e) {
+    if (rolling.size === 0) throw e; // nothing yet → let the caller fall back
+    // otherwise keep serving what we've accumulated despite this throttle
   }
-  if (ok === 0) throw new Error("all gdelt queries failed");
+
+  // expire stale articles so the feed stays fresh and bounded
+  for (const [url, a] of rolling) {
+    if (now - a._seen > ROLL_TTL_MS) rolling.delete(url);
+  }
+
   return {
-    items: aggregate([...merged.values()]),
+    items: aggregate([...rolling.values()]),
     source: "gdelt-client",
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: new Date(now).toISOString(),
   };
 }
