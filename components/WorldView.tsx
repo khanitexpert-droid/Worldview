@@ -10,13 +10,21 @@ import { LAYERS } from "@/lib/layers";
 import {
   fetchCctv,
   fetchEarthquakes,
+  fetchEvents,
   fetchFlights,
   fetchShips,
   fetchSatellites,
   fetchTraffic,
 } from "@/lib/feeds";
-import type { Flight, Ship, FeedEntity, LayerId } from "@/lib/types";
+import type {
+  Flight,
+  Ship,
+  FeedEntity,
+  LayerId,
+  WorldEvent,
+} from "@/lib/types";
 import { SatelliteField } from "@/lib/satField";
+import { EventFx } from "@/lib/eventFx";
 
 import TopBar from "./hud/TopBar";
 import Controls from "./hud/Controls";
@@ -31,6 +39,7 @@ const C = {
   amber: Cesium.Color.fromCssColorString("#ffb347"),
   red: Cesium.Color.fromCssColorString("#ff414e"),
   green: Cesium.Color.fromCssColorString("#5dff9e"),
+  gold: Cesium.Color.fromCssColorString("#ffe14d"),
   muted: Cesium.Color.fromCssColorString("#6c5b8c"),
 };
 // magenta airplane glyph (drawn pointing "up"/north; each plane's billboard
@@ -71,6 +80,9 @@ const POLL_MS: Record<PollLayerId, number> = {
   earthquakes: 60000,
   cctv: 60000,
   traffic: 15000,
+  // GDELT only refreshes upstream every ~15 min; poll at 5 min so a new slice
+  // shows up reasonably quickly without hammering the (rate-limited) API.
+  events: 300000,
 };
 
 const FETCHERS: Record<
@@ -82,6 +94,7 @@ const FETCHERS: Record<
   earthquakes: fetchEarthquakes,
   cctv: fetchCctv,
   traffic: fetchTraffic,
+  events: fetchEvents,
 };
 
 // layers handled by the generic (snap-on-poll) renderer — flights and ships are
@@ -216,6 +229,39 @@ function renderLayer(
     return;
   }
 
+  if (id === "events") {
+    let idx = 0;
+    for (const ev of items as WorldEvent[]) {
+      const eid = `events:${ev.id}`;
+      // size by article volume (sqrt so a 40-article hotspot isn't a blob)
+      const base = Math.min(8 + Math.sqrt(ev.count) * 3.2, 30);
+      const phase = (idx++ * 1.7) % (Math.PI * 2);
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(ev.lon, ev.lat, 0),
+        point: {
+          // gentle "breathing" so the hotspots feel alive between pings
+          pixelSize: new Cesium.CallbackProperty(
+            () => base + Math.sin(performance.now() / 600 + phase) * 1.4,
+            false
+          ),
+          color: new Cesium.CallbackProperty(
+            () =>
+              C.gold.withAlpha(
+                0.4 +
+                  0.18 * (0.5 + 0.5 * Math.sin(performance.now() / 600 + phase))
+              ),
+            false
+          ),
+          outlineColor: C.gold,
+          outlineWidth: 1.5,
+        },
+      });
+      sel.set(eid, { kind: "events", ...ev });
+    }
+    return;
+  }
+
   if (id === "traffic") {
     for (const r of items as import("@/lib/types").RoadTraffic[]) {
       const eid = `traffic:${r.id}`;
@@ -257,6 +303,11 @@ export default function WorldView() {
   // once we've seen a real feed, ignore synthetic-fallback polls so the map
   // doesn't flip-flop between thousands of real planes and 240 placeholders.
   const haveRealFlightsRef = useRef(false);
+  // ---- world-events headline ticker (streams new headlines into intel) ----
+  const seenEventUrlsRef = useRef<Set<string>>(new Set());
+  const eventsPrimedRef = useRef(false);
+  // ---- breaking-news radar FX (pings + situation web) ----
+  const eventFxRef = useRef<EventFx | null>(null);
 
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Record<LayerId, unknown[]>>({
@@ -266,6 +317,7 @@ export default function WorldView() {
     earthquakes: [],
     cctv: [],
     traffic: [],
+    events: [],
   });
 
   const layers = useWorldView((s) => s.layers);
@@ -344,6 +396,9 @@ export default function WorldView() {
     // satellite swarm — manages its own PointPrimitiveCollection + preRender loop
     satFieldRef.current = new SatelliteField(scene);
 
+    // breaking-news radar FX (pings + situation web) for the WORLD EVENTS layer
+    eventFxRef.current = new EventFx(viewer);
+
     // ---- per-frame: dead-reckon the truth target, ease the display to it ----
     lastTickRef.current = performance.now();
     const onTick = () => {
@@ -402,6 +457,9 @@ export default function WorldView() {
         else if (st.lon < -180) st.lon += 360;
         st.lat += (st.tLat - st.lat) * k;
       });
+
+      // advance/expire breaking-news radar pings
+      eventFxRef.current?.update();
     };
     viewer.clock.onTick.addEventListener(onTick);
 
@@ -466,6 +524,8 @@ export default function WorldView() {
     // dev-only handle for debugging/verification (stripped from prod bundles)
     if (process.env.NODE_ENV !== "production") {
       (window as unknown as { __wvViewer?: Cesium.Viewer }).__wvViewer = viewer;
+      (window as unknown as { __wvFx?: EventFx }).__wvFx =
+        eventFxRef.current ?? undefined;
     }
 
     return () => {
@@ -473,6 +533,8 @@ export default function WorldView() {
       handler.destroy();
       satFieldRef.current?.destroy();
       satFieldRef.current = null;
+      eventFxRef.current?.destroy();
+      eventFxRef.current = null;
       viewer.destroy();
       viewerRef.current = null;
     };
@@ -805,6 +867,89 @@ export default function WorldView() {
       }
     });
   }, [data, layers, ready]);
+
+  // ---- world events: keep the radar FX visibility in sync with the layer ----
+  useEffect(() => {
+    if (!ready) return;
+    eventFxRef.current?.setVisible(layers.events);
+  }, [ready, layers.events]);
+
+  // ---- world events: stream headlines to intel + drive the breaking-news radar ----
+  useEffect(() => {
+    if (!ready || !layers.events) return;
+    const events = data.events as WorldEvent[];
+    if (!events.length) return;
+
+    // wire the day's biggest hotspots into the glowing situation web
+    eventFxRef.current?.setWeb(
+      events.slice(0, 8).map((e) => ({ lon: e.lon, lat: e.lat }))
+    );
+
+    // flatten every country's headlines, newest first
+    const lines: {
+      country: string;
+      title: string;
+      url: string;
+      time: number;
+    }[] = [];
+    for (const ev of events) {
+      for (const h of ev.headlines) {
+        lines.push({
+          country: ev.name,
+          title: h.title,
+          url: h.url,
+          time: h.time,
+        });
+      }
+    }
+    lines.sort((a, b) => b.time - a.time);
+
+    const seen = seenEventUrlsRef.current;
+    const isPrime = !eventsPrimedRef.current;
+    const fmt = (l: { country: string; title: string }) => {
+      const t = l.title.length > 96 ? l.title.slice(0, 95) + "…" : l.title;
+      return `${l.country.toUpperCase()} · ${t}`;
+    };
+
+    // intel feed: first load surfaces a handful; later polls stream new ones.
+    const cap = isPrime ? 5 : 6;
+    const fresh = lines.filter((l) => !seen.has(l.url)).slice(0, cap);
+    for (const l of fresh.reverse()) pushIntel(fmt(l), "warn");
+
+    // radar pings
+    if (isPrime) {
+      // staggered sweep across the day's hotspots when the layer comes online
+      events.slice(0, 12).forEach((e, i) => {
+        const big = e.count >= 15;
+        const { lon, lat } = e;
+        setTimeout(
+          () => eventFxRef.current?.ping(lon, lat, { big, rings: big ? 3 : 2 }),
+          i * 170
+        );
+      });
+    } else {
+      // ping the countries that gained genuinely new headlines this poll
+      const newCountries = new Set(
+        lines.filter((l) => !seen.has(l.url)).map((l) => l.country)
+      );
+      let i = 0;
+      for (const e of events) {
+        if (!newCountries.has(e.name)) continue;
+        const big = e.count >= 15;
+        const { lon, lat } = e;
+        setTimeout(
+          () => eventFxRef.current?.ping(lon, lat, { big, rings: big ? 3 : 1 }),
+          i++ * 220
+        );
+      }
+    }
+
+    for (const l of lines) seen.add(l.url);
+    eventsPrimedRef.current = true;
+    if (seen.size > 4000) {
+      seenEventUrlsRef.current = new Set(lines.map((l) => l.url));
+    }
+  }, [data.events, layers.events, ready, pushIntel]);
 
   // ---- camera actions ----
   const flyTo = useCallback((lon: number, lat: number, height = 1_500_000) => {

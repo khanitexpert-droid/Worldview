@@ -54,6 +54,16 @@ export const LAYERS: LayerMeta[] = [
     defaultOn: true,
   },
   {
+    id: "events",
+    label: "WORLD EVENTS",
+    short: "INTL",
+    icon: "⚑",
+    color: "#ffe14d",
+    source: "GDELT · GLOBAL NEWS",
+    info: "GDELT scans the world's news in 100+ languages and refreshes every 15 minutes. This layer clusters the day's conflict, unrest and disaster coverage by the country of the reporting outlets — the brighter the node, the more the world is reporting from there right now. Click a node for the latest headlines.",
+    defaultOn: true,
+  },
+  {
     id: "cctv",
     label: "CCTV FEEDS",
     short: "CCTV",

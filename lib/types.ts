@@ -6,7 +6,8 @@ export type LayerId =
   | "earthquakes"
   | "ships"
   | "cctv"
-  | "traffic";
+  | "traffic"
+  | "events";
 
 export interface Flight {
   id: string;
@@ -99,10 +100,35 @@ export interface RoadTraffic {
   road: string;
 }
 
+/** One news article in a world-event cluster (parsed from the GDELT DOC feed). */
+export interface EventHeadline {
+  title: string;
+  url: string;
+  domain: string;
+  time: number; // epoch ms (parsed from GDELT seendate)
+  language?: string;
+}
+
+/**
+ * A cluster of "world event" news coverage, aggregated by the source country of
+ * the reporting outlets (GDELT classifies each article's media origin). Plotted
+ * as a single node at the country centroid, sized by how many articles cite it.
+ */
+export interface WorldEvent {
+  id: string; // country slug, e.g. "united-states" (stable key)
+  name: string; // country name, e.g. "Ukraine"
+  lon: number; // country centroid
+  lat: number;
+  count: number; // number of matching articles from this origin
+  latest: number; // most recent epoch ms across this country's articles
+  headlines: EventHeadline[]; // top headlines, most recent first
+}
+
 export type FeedEntity =
   | ({ kind: "flights" } & Flight)
   | ({ kind: "satellites" } & Satellite)
   | ({ kind: "earthquakes" } & Earthquake)
   | ({ kind: "ships" } & Ship)
   | ({ kind: "cctv" } & Camera)
-  | ({ kind: "traffic" } & RoadTraffic);
+  | ({ kind: "traffic" } & RoadTraffic)
+  | ({ kind: "events" } & WorldEvent);

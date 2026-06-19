@@ -15,6 +15,50 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+function timeAgo(ms: number): string {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 90) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+/** Scrollable list of real, clickable headlines for a selected world-event node. */
+function EventHeadlines({
+  event,
+}: {
+  event: Extract<FeedEntity, { kind: "events" }>;
+}) {
+  return (
+    <div className="mb-3">
+      <div className="mb-1.5 text-[9px] tracking-[0.2em] text-wv-muted">
+        LATEST COVERAGE
+      </div>
+      <div className="wv-scroll flex max-h-56 flex-col gap-1.5 overflow-y-auto pr-1">
+        {event.headlines.map((h, i) => (
+          <a
+            key={`${h.url}:${i}`}
+            href={h.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group block border-l border-wv-border pl-2 transition-colors hover:border-wv-cyan"
+          >
+            <div className="text-[10px] leading-snug text-wv-text/90 group-hover:text-wv-cyan">
+              {h.title || "(untitled report)"}
+            </div>
+            <div className="mt-0.5 flex items-center gap-2 text-[9px] text-wv-muted">
+              <span className="truncate">{h.domain}</span>
+              <span className="shrink-0">· {timeAgo(h.time)}</span>
+            </div>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode][] } {
   switch (e.kind) {
     case "flights": {
@@ -103,6 +147,15 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
           ["CONGESTION", e.level],
         ],
       };
+    case "events":
+      return {
+        title: e.name,
+        rows: [
+          ["COVERAGE", `${e.count} article${e.count === 1 ? "" : "s"} / 24h`],
+          ["LATEST", new Date(e.latest).toISOString().slice(11, 16) + "Z"],
+          ["BASIS", "MEDIA ORIGIN"],
+        ],
+      };
   }
 }
 
@@ -162,6 +215,9 @@ export default function EntityBody({
         {selected.kind === "ships" && (
           <VesselExtras mmsi={selected.id} name={selected.name} />
         )}
+
+        {/* world-event headlines (real, clickable news links) */}
+        {selected.kind === "events" && <EventHeadlines event={selected} />}
 
         {/* CCTV mock viewport */}
         {selected.kind === "cctv" && (

@@ -5,6 +5,7 @@ import type {
   RoadTraffic,
   Ship,
   SatelliteTle,
+  WorldEvent,
 } from "./types";
 
 export interface SatellitesResponse {
@@ -31,3 +32,5 @@ export const fetchEarthquakes = () =>
 export const fetchCctv = () => getJSON<{ items: Camera[] }>("/api/cctv");
 export const fetchTraffic = () =>
   getJSON<{ items: RoadTraffic[] }>("/api/traffic");
+export const fetchEvents = () =>
+  getJSON<{ items: WorldEvent[]; source?: string }>("/api/events");

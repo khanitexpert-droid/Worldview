@@ -12,6 +12,7 @@ const BOOT_LINES: { text: string; tone?: "magenta" | "cyan" }[] = [
   { text: "TAPPING USGS SEISMIC BACKBONE" },
   { text: "SYNCING AIS MARITIME RELAY" },
   { text: "INDEXING GLOBAL CCTV GRID" },
+  { text: "PARSING GDELT GLOBAL EVENT STREAM" },
   { text: "COMPILING POST-FX SHADERS" },
   { text: "CALIBRATING TACTICAL HUD OVERLAY" },
 ];
