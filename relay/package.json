@@ -1,0 +1,16 @@
+{
+  "name": "worldview-ais-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Always-on relay that holds one aisstream WebSocket connection and serves the latest global ship snapshot over HTTP, so a serverless host (Vercel) can read real AIS without holding a stream.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
