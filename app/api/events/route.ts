@@ -7,17 +7,14 @@ import {
   type GdeltArticle,
 } from "@/lib/gdelt";
 
-// Run server-side on every request (no static prerender), but let the response's
-// Cache-Control drive CDN edge caching (see `json()` below). We deliberately do
-// NOT set `revalidate = 0`, which would force `no-store` and defeat that.
-//
-// NOTE: this route is only a *fallback*. The client fetches GDELT directly
-// (lib/gdelt fetchGdeltEventsDirect) because GDELT hard-throttles datacenter
-// IPs — Vercel's shared egress IP gets a near-permanent 429 here. We still keep
-// the route (CDN-cached) for when a browser fetch is blocked.
+// Run on Vercel's EDGE network, not the serverless (AWS) runtime: GDELT blocks
+// the AWS egress IPs (the default route times out / 429s), but the Edge network
+// egresses from different IPs that may get through. The browser hits this route
+// same-origin, so there's no dependence on GDELT's (unreliable) CORS either.
+// The response Cache-Control drives CDN edge caching (see `json()`); we
+// deliberately do NOT set `revalidate = 0`, which would force `no-store`.
+export const runtime = "edge";
 export const dynamic = "force-dynamic";
-// head-room for the spaced 429 backoff-retries below.
-export const maxDuration = 60;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const UA = "WORLDVIEW/1.0 (+https://worldview-henna.vercel.app)";
@@ -34,7 +31,7 @@ interface EventsPayload {
 // notice ("Please limit requests to one every 5 seconds"). Both are transient —
 // back off past the 5s window (with jitter, so concurrent callers desync) and
 // retry to catch an open slot. Network errors get a short retry too.
-async function fetchArticles(query: string, retries = 3): Promise<GdeltArticle[]> {
+async function fetchArticles(query: string, retries = 1): Promise<GdeltArticle[]> {
   const url = buildDocUrl(query);
   for (let attempt = 0; ; attempt++) {
     let res: Response;
