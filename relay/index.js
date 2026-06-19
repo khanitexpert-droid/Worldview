@@ -76,6 +76,7 @@ let connected = false;
 let rawMsgs = 0;
 let lastMsg = 0;
 let backoff = 5000; // reconnect delay; grows on repeated failures, resets on success
+let lastEvent = "starting up"; // last connect/close/error reason (for /health)
 
 function connect() {
   if (!KEY) {
@@ -87,6 +88,7 @@ function connect() {
   ws.on("open", () => {
     connected = true;
     backoff = 5000; // healthy connection — reset the backoff
+    lastEvent = "connected";
     console.log("aisstream connected");
     ws.send(
       JSON.stringify({
@@ -145,6 +147,7 @@ function connect() {
     if (scheduled) return;
     scheduled = true;
     connected = false;
+    lastEvent = why;
     console.log(`aisstream ${why} — reconnecting in ${Math.round(backoff / 1000)}s`);
     setTimeout(connect, backoff);
     backoff = Math.min(Math.round(backoff * 1.8), 60000); // cap at 60s
@@ -195,6 +198,8 @@ http
           statics: statics.size,
           rawMsgs,
           lastMsgAgoSec: lastMsg ? Math.round((Date.now() - lastMsg) / 1000) : null,
+          lastEvent,
+          hasKey: !!KEY,
         })
       );
       return;
