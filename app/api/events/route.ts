@@ -1,10 +1,13 @@
 import type { EventHeadline, WorldEvent } from "@/lib/types";
 import { centroidFor } from "@/lib/countryCentroids";
 
+// Run server-side on every request (no static prerender), but let the response's
+// Cache-Control drive CDN edge caching (see `json()` below). We deliberately do
+// NOT set `revalidate = 0`, which would force `no-store` and defeat that.
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
-// allow head-room for the 429 backoff-retry below (GDELT throttles to 1 req/5s)
-export const maxDuration = 30;
+// head-room for the spaced 429 backoff-retries (GDELT throttles to 1 req/5s, and
+// Vercel's shared egress IP is often already near that limit).
+export const maxDuration = 60;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -38,6 +41,7 @@ interface EventsPayload {
   source: string;
   live: boolean;
   fetchedAt: string;
+  error?: string;
 }
 
 // "20260619T160000Z" -> epoch ms
@@ -57,10 +61,11 @@ function cleanTitle(t: string): string {
     .trim();
 }
 
-async function fetchArticles(
-  query: string,
-  retryOn429 = true
-): Promise<GdeltArticle[]> {
+// GDELT throttling shows up two ways: HTTP 429, or HTTP 200 with a plain-text
+// notice ("Please limit requests to one every 5 seconds"). Both are transient —
+// back off past the 5s window (with jitter, so concurrent callers desync) and
+// retry to catch an open slot. Network errors get a short retry too.
+async function fetchArticles(query: string, retries = 3): Promise<GdeltArticle[]> {
   const u = new URL(GDELT);
   u.searchParams.set("query", query);
   u.searchParams.set("mode", "artlist");
@@ -69,24 +74,37 @@ async function fetchArticles(
   u.searchParams.set("timespan", "24h");
   u.searchParams.set("sort", "datedesc");
 
-  const res = await fetch(u, {
-    cache: "no-store",
-    headers: { "user-agent": UA },
-    signal: AbortSignal.timeout(8000),
-  });
-  // GDELT throttles to 1 request / 5 s per IP; on a throttle, wait it out once.
-  if (res.status === 429 && retryOn429) {
-    await sleep(5200);
-    return fetchArticles(query, false);
+  for (let attempt = 0; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(u, {
+        cache: "no-store",
+        headers: { "user-agent": UA },
+        signal: AbortSignal.timeout(6000),
+      });
+    } catch (e) {
+      if (attempt >= retries) throw e;
+      await sleep(2000);
+      continue;
+    }
+
+    if (res.status === 429 && attempt < retries) {
+      await sleep(5000 + Math.random() * 1500);
+      continue;
+    }
+    if (!res.ok) throw new Error(`gdelt ${res.status}`);
+
+    const text = await res.text();
+    if (!text.trimStart().startsWith("{")) {
+      if (attempt < retries) {
+        await sleep(5000 + Math.random() * 1500);
+        continue;
+      }
+      throw new Error(`gdelt non-json: ${text.slice(0, 80)}`);
+    }
+    const data = JSON.parse(text) as { articles?: GdeltArticle[] };
+    return data.articles ?? [];
   }
-  if (!res.ok) throw new Error(`gdelt ${res.status}`);
-  // GDELT returns a plain-text throttle notice (not JSON) when rate-limited.
-  const text = await res.text();
-  if (!text.trimStart().startsWith("{")) {
-    throw new Error(`gdelt non-json: ${text.slice(0, 80)}`);
-  }
-  const data = JSON.parse(text) as { articles?: GdeltArticle[] };
-  return data.articles ?? [];
 }
 
 function aggregate(articles: GdeltArticle[]): WorldEvent[] {
@@ -133,17 +151,33 @@ function aggregate(articles: GdeltArticle[]): WorldEvent[] {
   return items;
 }
 
-// Module-scope cache: protects GDELT's 1-request-per-5-seconds limit when the
-// lambda is warm and several clients poll at once. Survives only within a warm
-// instance, which is exactly the burst window we care about.
+// Send the payload with Cache-Control tuned to whether we actually have data:
+//  - real data  -> cache at the CDN edge for 5 min and serve stale for a day
+//    while revalidating. GDELT then gets hit ~once per window *globally*
+//    (across all visitors / lambda instances), not per request, and a single
+//    success keeps the layer populated edge-wide even while GDELT throttles.
+//  - empty fallback -> only a short cache, so we retry GDELT again soon.
+function json(payload: EventsPayload) {
+  const fresh = payload.items.length > 0;
+  return Response.json(payload, {
+    headers: {
+      "Cache-Control": fresh
+        ? "public, s-maxage=300, stale-while-revalidate=86400"
+        : "public, s-maxage=20",
+    },
+  });
+}
+
+// Module-scope cache: protects GDELT when a warm instance fields several polls.
+// Complements the edge cache above (which works across instances).
 let cache: { at: number; payload: EventsPayload } | null = null;
 const TTL_MS = 90_000; // serve fresh cache without re-hitting GDELT
-const STALE_MS = 30 * 60_000; // on upstream failure, serve stale up to 30 min
+const STALE_MS = 6 * 60 * 60_000; // on upstream failure, serve stale up to 6h
 
 export async function GET() {
   const now = Date.now();
   if (cache && now - cache.at < TTL_MS) {
-    return Response.json(cache.payload);
+    return json(cache.payload);
   }
 
   try {
@@ -163,14 +197,16 @@ export async function GET() {
       live: true,
       fetchedAt: new Date().toISOString(),
     };
-    cache = { at: now, payload };
-    return Response.json(payload);
+    // only promote a non-empty result to the cache, so a momentarily empty
+    // GDELT response can't evict good data.
+    if (payload.items.length > 0 || !cache) cache = { at: now, payload };
+    return json(payload);
   } catch (err) {
     // upstream down / throttled — serve the last good payload if we have one
     if (cache && now - cache.at < STALE_MS) {
-      return Response.json({ ...cache.payload, source: "gdelt (cached)" });
+      return json({ ...cache.payload, source: "gdelt (cached)" });
     }
-    return Response.json({
+    return json({
       items: [],
       source: "fallback",
       live: false,
