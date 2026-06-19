@@ -25,6 +25,7 @@ import type {
 } from "@/lib/types";
 import { SatelliteField } from "@/lib/satField";
 import { EventFx } from "@/lib/eventFx";
+import { MapLabels } from "@/lib/mapLabels";
 
 import TopBar from "./hud/TopBar";
 import Controls from "./hud/Controls";
@@ -309,6 +310,8 @@ export default function WorldView() {
   const eventsPrimedRef = useRef(false);
   // ---- breaking-news radar FX (pings + situation web) ----
   const eventFxRef = useRef<EventFx | null>(null);
+  // ---- place-name labels (countries / cities / oceans) ----
+  const mapLabelsRef = useRef<MapLabels | null>(null);
 
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Record<LayerId, unknown[]>>({
@@ -399,6 +402,9 @@ export default function WorldView() {
 
     // breaking-news radar FX (pings + situation web) for the WORLD EVENTS layer
     eventFxRef.current = new EventFx(viewer);
+
+    // place-name labels — countries, cities (on zoom-in), oceans
+    mapLabelsRef.current = new MapLabels(viewer);
 
     // ---- per-frame: dead-reckon the truth target, ease the display to it ----
     lastTickRef.current = performance.now();
@@ -536,6 +542,8 @@ export default function WorldView() {
       satFieldRef.current = null;
       eventFxRef.current?.destroy();
       eventFxRef.current = null;
+      mapLabelsRef.current?.destroy();
+      mapLabelsRef.current = null;
       viewer.destroy();
       viewerRef.current = null;
     };
