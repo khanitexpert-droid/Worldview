@@ -11,11 +11,18 @@ export const GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc";
 // language-independent GDELT GKG themes: unrest / war / disaster / terror.
 export const THEME_QUERY =
   "(theme:PROTEST OR theme:ARMEDCONFLICT OR theme:NATURAL_DISASTER OR theme:TERROR)";
-// keyword widener, only used if the themed feed comes back thin.
+// broad world-affairs keywords: politics / economy / justice / health / weather.
+export const BROAD_QUERY =
+  "(election OR vote OR parliament OR summit OR sanctions OR economy OR inflation OR court OR verdict OR trial OR outbreak OR storm OR wildfire OR earthquake OR ceasefire OR diplomacy OR treaty OR strike)";
+// incidents / breaking keywords.
 export const KEYWORD_QUERY =
-  "(protest OR clash OR attack OR strike OR explosion OR flood OR wildfire OR airstrike OR ceasefire OR evacuation OR sanctions)";
+  "(protest OR clash OR attack OR explosion OR flood OR evacuation OR crash OR shooting OR coup OR resignation OR scandal OR border OR missile OR drone OR riot OR arrest)";
 
-const MAX_HEADLINES = 12; // per country, kept in the detail panel
+// The client fires these in sequence (spaced for GDELT's rate limit) and merges
+// the results — far more countries / coverage than a single 250-record query.
+export const QUERIES = [THEME_QUERY, BROAD_QUERY, KEYWORD_QUERY];
+
+const MAX_HEADLINES = 25; // per country, kept in the detail panel
 
 export interface GdeltArticle {
   url: string;
@@ -107,21 +114,44 @@ export interface EventsResult {
   fetchedAt: string;
 }
 
-/**
- * Fetch + aggregate straight from the browser (visitor's residential IP). This
- * is the primary path — it sidesteps GDELT's datacenter-IP throttling that makes
- * the Vercel server route unreliable. Throws on throttle/non-JSON so the caller
- * can fall back to the server route.
- */
-export async function fetchGdeltEventsDirect(): Promise<EventsResult> {
-  const res = await fetch(buildDocUrl(THEME_QUERY), { cache: "no-store" });
+const QUERY_GAP_MS = 5500; // GDELT throttles to 1 request / 5 s per IP
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchOne(query: string): Promise<GdeltArticle[]> {
+  const res = await fetch(buildDocUrl(query), { cache: "no-store" });
   if (!res.ok) throw new Error(`gdelt ${res.status}`);
   const text = await res.text();
   // a throttle notice comes back as plain text, not JSON
   if (!text.trimStart().startsWith("{")) throw new Error("gdelt throttled");
   const data = JSON.parse(text) as { articles?: GdeltArticle[] };
+  return data.articles ?? [];
+}
+
+/**
+ * Fetch + aggregate straight from the browser (visitor's residential IP). This
+ * is the primary path — it sidesteps GDELT's datacenter-IP throttling that makes
+ * the Vercel server route unreliable. Fires several queries in sequence (spaced
+ * for the 1-req/5s limit) and merges them for much broader country coverage;
+ * a throttled query is skipped rather than failing the whole load. Throws only
+ * if every query failed, so the caller can fall back to the server route.
+ */
+export async function fetchGdeltEventsDirect(): Promise<EventsResult> {
+  const merged = new Map<string, GdeltArticle>(); // dedupe by url across queries
+  let ok = 0;
+  for (let i = 0; i < QUERIES.length; i++) {
+    if (i > 0) await wait(QUERY_GAP_MS); // stay under GDELT's per-IP rate limit
+    try {
+      for (const a of await fetchOne(QUERIES[i])) {
+        if (a.url) merged.set(a.url, a);
+      }
+      ok++;
+    } catch {
+      // a throttled/failed query is fine — keep whatever the others returned
+    }
+  }
+  if (ok === 0) throw new Error("all gdelt queries failed");
   return {
-    items: aggregate(data.articles ?? []),
+    items: aggregate([...merged.values()]),
     source: "gdelt-client",
     fetchedAt: new Date().toISOString(),
   };

@@ -80,9 +80,10 @@ const POLL_MS: Record<PollLayerId, number> = {
   earthquakes: 60000,
   cctv: 60000,
   traffic: 15000,
-  // GDELT only refreshes upstream every ~15 min; poll at 5 min so a new slice
-  // shows up reasonably quickly without hammering the (rate-limited) API.
-  events: 300000,
+  // GDELT only refreshes upstream every ~15 min; poll at 3 min to catch each
+  // new slice promptly. The client fetch is multi-query (~16s) so this is well
+  // clear of overlapping itself.
+  events: 180000,
 };
 
 const FETCHERS: Record<
