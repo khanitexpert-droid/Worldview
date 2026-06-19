@@ -1,0 +1,40 @@
+name: events
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "scripts/fetch-events.ts"
+      - ".github/workflows/events.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: events
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Fetch GDELT -> events.json
+        run: npx -y tsx scripts/fetch-events.ts
+      - name: Publish events.json to data branch
+        run: |
+          mkdir -p /tmp/pub && cp events.json /tmp/pub/
+          cd /tmp/pub
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b data
+          git add events.json
+          git commit -q -m "events $(date -u +%FT%TZ)"
+          git push -fq "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
