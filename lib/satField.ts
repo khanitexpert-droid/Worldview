@@ -12,9 +12,24 @@ import type { SatelliteTle, SatOrbit } from "./types";
 
 // ---- palette (kept in sync with WorldView's HUD colors) ----
 const LEO_COLOR = Cesium.Color.fromCssColorString("#b14bff"); // violet
-const LEO_OUTLINE = Cesium.Color.fromCssColorString("#00e5ff").withAlpha(0.55);
 const GEO_COLOR = Cesium.Color.fromCssColorString("#ffb347"); // amber
-const GEO_OUTLINE = Cesium.Color.WHITE.withAlpha(0.6);
+
+// A tiny satellite glyph — central body + two solar-panel wings — drawn white so
+// each billboard can be tinted to its orbit colour (white × tint = tint), with a
+// thin dark outline baked in for contrast against bright parts of the globe.
+const SAT_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
+  "<g fill='#ffffff' stroke='#0a0118' stroke-width='0.9' stroke-linejoin='round'>" +
+  "<rect x='8' y='11' width='8' height='2'/>" + // bus connecting the wings
+  "<rect x='1.5' y='8.5' width='6' height='7' rx='0.6'/>" + // left solar panel
+  "<rect x='16.5' y='8.5' width='6' height='7' rx='0.6'/>" + // right solar panel
+  "<rect x='9.5' y='8' width='5' height='8' rx='1'/>" + // central body
+  "</g></svg>";
+const SAT_IMAGE = `data:image/svg+xml,${encodeURIComponent(SAT_SVG)}`;
+
+// Shrink the icons when the camera is far so the full swarm doesn't read as a
+// solid mass at globe scale, and show them full-size when you zoom in to inspect.
+const SAT_SCALE = new Cesium.NearFarScalar(3.0e6, 1.0, 5.0e7, 0.4);
 
 // We re-run SGP4 for each satellite every STEP_MS and linearly interpolate the
 // (Earth-fixed) position in between. At STEP_MS = 4 s a LEO target moves ~30 km;
@@ -30,7 +45,7 @@ interface SatItem {
   orbit: SatOrbit;
   altKm: number;
   satrec: SatRec;
-  pp: Cesium.PointPrimitive;
+  bb: Cesium.Billboard;
   // two SGP4 samples that bracket "now" (ECEF metres) + their timestamps
   t0: number;
   t1: number;
@@ -52,12 +67,12 @@ function sampleEcef(satrec: SatRec, date: Date): Cesium.Cartesian3 | null {
 }
 
 /**
- * Renders a swarm of satellites as a single PointPrimitiveCollection and
- * animates each one along its real SGP4 orbit, smoothly, every frame.
+ * Renders a swarm of satellites as a single BillboardCollection (one small
+ * satellite icon each) and animates them along their real SGP4 orbits, smoothly.
  */
 export class SatelliteField {
   private scene: Cesium.Scene;
-  private collection: Cesium.PointPrimitiveCollection;
+  private collection: Cesium.BillboardCollection;
   private items: SatItem[] = [];
   private byId = new Map<string, SatItem>();
   private removeTick: Cesium.Event.RemoveCallback;
@@ -67,7 +82,7 @@ export class SatelliteField {
 
   constructor(scene: Cesium.Scene) {
     this.scene = scene;
-    this.collection = scene.primitives.add(new Cesium.PointPrimitiveCollection());
+    this.collection = scene.primitives.add(new Cesium.BillboardCollection({ scene }));
     // preRender fires once per frame, right before Cesium draws — the natural
     // place to refresh positions so motion is locked to the render loop.
     this.removeTick = scene.preRender.addEventListener(() => this.update());
@@ -96,12 +111,13 @@ export class SatelliteField {
       if (!p0 || !p1) return;
 
       const isGeo = t.orbit === "GEO";
-      const pp = this.collection.add({
+      const bb = this.collection.add({
         position: p0,
-        pixelSize: isGeo ? 5 : 3.5,
+        image: SAT_IMAGE,
+        width: isGeo ? 18 : 13,
+        height: isGeo ? 18 : 13,
         color: isGeo ? GEO_COLOR : LEO_COLOR,
-        outlineColor: isGeo ? GEO_OUTLINE : LEO_OUTLINE,
-        outlineWidth: 1,
+        scaleByDistance: SAT_SCALE,
         id: `satellites:${t.id}`,
       });
 
@@ -111,7 +127,7 @@ export class SatelliteField {
         orbit: t.orbit,
         altKm: t.altKm,
         satrec,
-        pp,
+        bb,
         t0: now,
         t1,
         p0,
@@ -145,7 +161,7 @@ export class SatelliteField {
 
     for (let k = 0; k < budget; k++, i = i + 1 >= n ? 0 : i + 1) {
       const s = this.items[i];
-      if (!s.alive || !s.pp.show) continue;
+      if (!s.alive || !s.bb.show) continue;
 
       if (now >= s.t1) {
         if (now - s.t1 > STEP_MS) {
@@ -154,7 +170,7 @@ export class SatelliteField {
           const b = sampleEcef(s.satrec, new Date(now + STEP_MS));
           if (!a || !b) {
             s.alive = false;
-            s.pp.show = false;
+            s.bb.show = false;
             continue;
           }
           s.t0 = now;
@@ -169,7 +185,7 @@ export class SatelliteField {
           const b = sampleEcef(s.satrec, new Date(s.t1));
           if (!b) {
             s.alive = false;
-            s.pp.show = false;
+            s.bb.show = false;
             continue;
           }
           s.p1 = b;
@@ -180,7 +196,7 @@ export class SatelliteField {
       if (f < 0) f = 0;
       else if (f > 1) f = 1;
       Cesium.Cartesian3.lerp(s.p0, s.p1, f, scratch);
-      s.pp.position = scratch;
+      s.bb.position = scratch;
     }
 
     this.cursor = i;
@@ -196,14 +212,14 @@ export class SatelliteField {
 
   private applyVisibility() {
     for (const s of this.items) {
-      s.pp.show = this.layerOn && this.orbits[s.orbit];
+      s.bb.show = this.layerOn && this.orbits[s.orbit];
     }
   }
 
   /** Live interpolated Earth-fixed position (for the selection marker). */
   liveCartesian(norad: string): Cesium.Cartesian3 | undefined {
     const s = this.byId.get(norad);
-    return s ? Cesium.Cartesian3.clone(s.pp.position) : undefined;
+    return s ? Cesium.Cartesian3.clone(s.bb.position) : undefined;
   }
 
   /** Exact sub-satellite point right now (for the detail readout). */
