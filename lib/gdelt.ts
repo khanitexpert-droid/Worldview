@@ -108,64 +108,7 @@ export function aggregate(articles: GdeltArticle[]): WorldEvent[] {
   return items;
 }
 
-export interface EventsResult {
-  items: WorldEvent[];
-  source: string;
-  fetchedAt: string;
-}
-
-// Rolling cache of recently-seen articles, accumulated across polls (see
-// fetchGdeltEventsDirect). Lets us build broad coverage from just ONE request
-// per poll instead of several at once — firing multiple queries per load trips
-// GDELT's 1-request-per-5s-per-IP limit and gets the visitor's own IP throttled.
-interface SeenArticle extends GdeltArticle {
-  _seen: number;
-}
-const rolling = new Map<string, SeenArticle>();
-const ROLL_TTL_MS = 30 * 60_000; // drop articles not re-seen within 30 min
-let queryIdx = 0;
-
-async function fetchOne(query: string): Promise<GdeltArticle[]> {
-  const res = await fetch(buildDocUrl(query), { cache: "no-store" });
-  if (!res.ok) throw new Error(`gdelt ${res.status}`);
-  const text = await res.text();
-  // a throttle notice comes back as plain text, not JSON
-  if (!text.trimStart().startsWith("{")) throw new Error("gdelt throttled");
-  const data = JSON.parse(text) as { articles?: GdeltArticle[] };
-  return data.articles ?? [];
-}
-
-/**
- * Fetch + aggregate straight from the browser (visitor's residential IP) — this
- * sidesteps GDELT's datacenter-IP throttling that makes the Vercel server route
- * unreliable. Fires exactly ONE query per call (rotating through QUERIES) and
- * merges it into a rolling cache, so coverage broadens over a few polls without
- * ever exceeding GDELT's 1-request-per-5s-per-IP limit. A throttled poll keeps
- * showing the accumulated data; it only throws (so the caller can fall back to
- * the server route) when we have nothing cached yet.
- */
-export async function fetchGdeltEventsDirect(): Promise<EventsResult> {
-  const now = Date.now();
-  const query = QUERIES[queryIdx % QUERIES.length];
-  queryIdx++;
-
-  try {
-    for (const a of await fetchOne(query)) {
-      if (a.url) rolling.set(a.url, { ...a, _seen: now });
-    }
-  } catch (e) {
-    if (rolling.size === 0) throw e; // nothing yet → let the caller fall back
-    // otherwise keep serving what we've accumulated despite this throttle
-  }
-
-  // expire stale articles so the feed stays fresh and bounded
-  for (const [url, a] of rolling) {
-    if (now - a._seen > ROLL_TTL_MS) rolling.delete(url);
-  }
-
-  return {
-    items: aggregate([...rolling.values()]),
-    source: "gdelt-client",
-    fetchedAt: new Date(now).toISOString(),
-  };
-}
+// NOTE: the live GDELT fetch runs in scripts/fetch-events.ts on GitHub Actions
+// (a clean IP GDELT will serve) — not in the browser or on Vercel, both of whose
+// IPs GDELT blocks. This module only provides the shared query + parse +
+// aggregate helpers that the Action (and any server code) reuses.

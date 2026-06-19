@@ -7,7 +7,6 @@ import type {
   SatelliteTle,
   WorldEvent,
 } from "./types";
-import { fetchGdeltEventsDirect } from "./gdelt";
 
 export interface SatellitesResponse {
   items: SatelliteTle[];
@@ -33,16 +32,8 @@ export const fetchEarthquakes = () =>
 export const fetchCctv = () => getJSON<{ items: Camera[] }>("/api/cctv");
 export const fetchTraffic = () =>
   getJSON<{ items: RoadTraffic[] }>("/api/traffic");
-// Prefer a direct browser fetch — the visitor's residential IP isn't throttled
-// by GDELT the way Vercel's shared datacenter IP is. Fall back to the (CDN-cached)
-// server route if the browser request is blocked or throttled.
-export const fetchEvents = async (): Promise<{
-  items: WorldEvent[];
-  source?: string;
-}> => {
-  try {
-    return await fetchGdeltEventsDirect();
-  } catch {
-    return getJSON<{ items: WorldEvent[]; source?: string }>("/api/events");
-  }
-};
+// Read the events the scheduled GitHub Action publishes (relayed same-origin by
+// /api/events). We do NOT fetch GDELT from the browser — its CORS on the JSON
+// endpoint is unreliable and per-IP rate limits bite visitors.
+export const fetchEvents = () =>
+  getJSON<{ items: WorldEvent[]; source?: string }>("/api/events");
