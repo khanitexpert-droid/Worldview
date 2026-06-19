@@ -75,6 +75,7 @@ const statics = new Map(); // mmsi -> { Type, ImoNumber, ... }
 let connected = false;
 let rawMsgs = 0;
 let lastMsg = 0;
+let backoff = 5000; // reconnect delay; grows on repeated failures, resets on success
 
 function connect() {
   if (!KEY) {
@@ -85,6 +86,7 @@ function connect() {
 
   ws.on("open", () => {
     connected = true;
+    backoff = 5000; // healthy connection — reset the backoff
     console.log("aisstream connected");
     ws.send(
       JSON.stringify({
@@ -135,12 +137,20 @@ function connect() {
     });
   });
 
-  ws.on("close", () => {
+  // schedule at most ONE reconnect per connection, with exponential backoff so
+  // a refused connection can't turn into a request storm (which trips
+  // aisstream's 429 rate limit).
+  let scheduled = false;
+  const reconnect = (why) => {
+    if (scheduled) return;
+    scheduled = true;
     connected = false;
-    console.log("aisstream closed — reconnecting in 3s");
-    setTimeout(connect, 3000);
-  });
-  ws.on("error", (e) => console.error("aisstream error:", e.message));
+    console.log(`aisstream ${why} — reconnecting in ${Math.round(backoff / 1000)}s`);
+    setTimeout(connect, backoff);
+    backoff = Math.min(Math.round(backoff * 1.8), 60000); // cap at 60s
+  };
+  ws.on("close", () => reconnect("closed"));
+  ws.on("error", (e) => reconnect(`error: ${e.message}`));
 }
 connect();
 
