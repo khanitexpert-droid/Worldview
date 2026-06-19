@@ -22,6 +22,8 @@ const STALE_TTL = 10 * 60_000;
 
 let cache: { items: Ship[]; ts: number; source: string } | null = null;
 let inflight: Promise<Ship[]> | null = null;
+// temporary diagnostic: what the last aisstream gather actually did
+let lastDiag: Record<string, unknown> = { note: "no gather yet" };
 
 // Persistent (across requests, while the lambda stays warm) accumulator of AIS
 // type-5 static data keyed by MMSI. Static messages are broadcast only every
@@ -138,6 +140,8 @@ function gatherSnapshot(apiKey: string): Promise<Ship[]> {
   return new Promise((resolve, reject) => {
     const positions = new Map<number, Ship>();
     let settled = false;
+    let opened = false;
+    let rawMsgs = 0;
 
     const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
 
@@ -150,6 +154,13 @@ function gatherSnapshot(apiKey: string): Promise<Ship[]> {
       } catch {
         /* ignore */
       }
+      lastDiag = {
+        opened,
+        rawMsgs,
+        positions: positions.size,
+        error: err?.message ?? null,
+        at: new Date().toISOString(),
+      };
       if (err && positions.size === 0) return reject(err);
       // merge accumulated static data (type / particulars) into positions
       const ships: Ship[] = [];
@@ -174,6 +185,7 @@ function gatherSnapshot(apiKey: string): Promise<Ship[]> {
     const timer = setTimeout(() => finish(), GATHER_MS);
 
     ws.on("open", () => {
+      opened = true;
       ws.send(
         JSON.stringify({
           APIKey: apiKey,
@@ -189,6 +201,7 @@ function gatherSnapshot(apiKey: string): Promise<Ship[]> {
     });
 
     ws.on("message", (raw: Buffer) => {
+      rawMsgs++;
       let msg: AisMessage;
       try {
         msg = JSON.parse(raw.toString());
@@ -246,7 +259,12 @@ export async function GET() {
 
   const apiKey = process.env.AISSTREAM_API_KEY;
   if (!apiKey) {
-    return Response.json({ items: syntheticShips(), source: "sim-ais", live: false });
+    return Response.json({
+      items: syntheticShips(),
+      source: "sim-ais",
+      live: false,
+      diag: { keyMissing: true },
+    });
   }
 
   try {
@@ -266,7 +284,12 @@ export async function GET() {
   if (cache && now - cache.ts < STALE_TTL) {
     return Response.json({ items: cache.items, source: `${cache.source}-cached`, live: true });
   }
-  return Response.json({ items: syntheticShips(), source: "sim-ais", live: false });
+  return Response.json({
+    items: syntheticShips(),
+    source: "sim-ais",
+    live: false,
+    diag: lastDiag,
+  });
 }
 
 // ---- coherent synthetic fallback (used only if the key/stream is unavailable) ----
