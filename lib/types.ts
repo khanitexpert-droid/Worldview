@@ -47,9 +47,21 @@ export interface Ship {
   name: string;
   lon: number;
   lat: number;
-  heading: number;
+  heading: number; // course over ground (deg)
   type: string;
-  speed: number; // knots
+  speed: number; // knots (speed over ground)
+  status?: string; // navigational status, e.g. "UNDER WAY"
+  destination?: string;
+  flag?: string; // country derived from MMSI MID
+  timePosition?: number; // epoch ms of this fix (for accurate propagation)
+  // ---- static-message particulars (only present when the vessel has recently
+  // broadcast an AIS type-5 message during the snapshot window) ----
+  imo?: number;
+  callsign?: string;
+  length?: number; // metres (bow-to-stern, from AIS dimensions)
+  beam?: number; // metres (width)
+  draught?: number; // metres
+  eta?: string; // formatted estimated time of arrival
 }
 
 export interface Camera {

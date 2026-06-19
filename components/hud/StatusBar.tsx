@@ -20,7 +20,7 @@ export default function StatusBar() {
   );
 
   return (
-    <div className="hud-panel fixed bottom-3 left-3 z-40 flex items-center gap-4 px-3 py-1.5 text-[10px] tracking-wider">
+    <div className="hud-panel fixed bottom-3 left-[64px] z-40 flex items-center gap-4 px-3 py-1.5 text-[10px] tracking-wider">
       <span className="flex items-center gap-1.5 text-wv-cyan">
         <span className="wv-live-dot inline-block h-1.5 w-1.5 rounded-full bg-wv-cyan" />
         ALL SYSTEMS NOMINAL

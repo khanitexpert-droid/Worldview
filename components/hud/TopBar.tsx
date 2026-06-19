@@ -13,7 +13,7 @@ export default function TopBar() {
   }, []);
 
   return (
-    <div className="pointer-events-none fixed top-3 left-3 z-40 select-none">
+    <div className="pointer-events-none fixed top-3 left-[64px] z-40 select-none">
       <div className="flex items-center gap-3">
         <div className="text-wv-magenta glow-magenta text-xl font-bold tracking-[0.25em] leading-none">
           WORLD<span className="text-wv-cyan glow-cyan">VIEW</span>

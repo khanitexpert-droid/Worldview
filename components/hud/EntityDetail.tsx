@@ -3,6 +3,8 @@
 import { useWorldView } from "@/lib/store";
 import { LAYER_BY_ID } from "@/lib/layers";
 import type { FeedEntity } from "@/lib/types";
+import FlightExtras from "./FlightExtras";
+import VesselExtras from "./VesselExtras";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -39,16 +41,29 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
       );
       return { title: e.callsign, rows };
     }
-    case "ships":
-      return {
-        title: e.name,
-        rows: [
-          ["TYPE", e.type],
-          ["HDG", `${Math.round(e.heading)}°`],
-          ["SPD", `${e.speed.toFixed(1)} kn`],
-          ["MMSI", e.id.replace("MMSI", "")],
-        ],
-      };
+    case "ships": {
+      const rows: [string, React.ReactNode][] = [["TYPE", e.type]];
+      if (e.flag) rows.push(["FLAG", e.flag]);
+      if (e.status) rows.push(["STATUS", e.status]);
+      rows.push(
+        ["COURSE", `${Math.round(e.heading)}°`],
+        ["SPEED", `${e.speed.toFixed(1)} kn`]
+      );
+      if (e.length)
+        rows.push([
+          "SIZE",
+          e.beam
+            ? `${Math.round(e.length)} × ${Math.round(e.beam)} m`
+            : `${Math.round(e.length)} m`,
+        ]);
+      if (e.draught) rows.push(["DRAUGHT", `${e.draught.toFixed(1)} m`]);
+      if (e.destination) rows.push(["DEST", e.destination]);
+      if (e.eta) rows.push(["ETA", e.eta]);
+      rows.push(["MMSI", e.id]);
+      if (e.imo) rows.push(["IMO", String(e.imo)]);
+      if (e.callsign) rows.push(["CALLSIGN", e.callsign]);
+      return { title: e.name, rows };
+    }
     case "satellites":
       return {
         title: e.name,
@@ -88,50 +103,62 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
   }
 }
 
-export default function EntityDetail({
+/**
+ * Detail for the currently selected globe entity — rendered inside the right
+ * rail's side panel (content only; the rail provides the panel chrome/header).
+ * Shows an empty state when nothing is selected.
+ */
+export default function EntityBody({
   onFlyTo,
 }: {
   onFlyTo: (lon: number, lat: number, h?: number) => void;
 }) {
   const selected = useWorldView((s) => s.selected);
-  const setSelected = useWorldView((s) => s.setSelected);
-  if (!selected) return null;
+
+  if (!selected) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+        <span className="text-2xl text-wv-muted">⌖</span>
+        <span className="text-[10px] tracking-widest text-wv-muted">
+          NO CONTACT SELECTED
+        </span>
+        <span className="text-[9px] leading-relaxed text-wv-muted/70">
+          Click any contact on the globe to inspect it here.
+        </span>
+      </div>
+    );
+  }
 
   const meta = LAYER_BY_ID[selected.kind];
   const { title, rows } = fields(selected);
   const e = selected as unknown as { lon: number; lat: number; altKm?: number };
 
   return (
-    <div
-      className="hud-panel corner-ticks fixed top-20 right-3 z-40 w-72"
-      style={{ boxShadow: `0 0 14px ${meta.color}44` }}
-    >
+    <div className="px-3 py-3">
       <div
-        className="hud-panel-header flex items-center justify-between px-3 py-1.5"
-        style={{
-          background: `linear-gradient(90deg, ${meta.color}22, transparent)`,
-        }}
+        className="mb-2 flex items-center gap-2 text-[10px] font-bold tracking-[0.18em]"
+        style={{ color: meta.color }}
       >
-        <span className="flex items-center gap-2 text-[11px] font-bold tracking-[0.18em]">
-          <span style={{ color: meta.color }}>{meta.icon}</span>
-          <span className="text-wv-text">{meta.label}</span>
-        </span>
-        <button
-          onClick={() => setSelected(null)}
-          className="text-wv-muted transition-colors hover:text-wv-red"
-          aria-label="close"
-        >
-          ✕
-        </button>
+        <span>{meta.icon}</span>
+        <span>{meta.label}</span>
       </div>
-
-      <div className="px-3 py-2">
+      <div>
         <div
           className="mb-2 truncate text-[13px] font-bold"
           style={{ color: meta.color }}
         >
           {title}
         </div>
+
+        {/* aircraft photo + live world-count + history link */}
+        {selected.kind === "flights" && (
+          <FlightExtras hex={selected.id} reg={selected.registration} />
+        )}
+
+        {/* real vessel photo (VesselFinder) + live vessel count */}
+        {selected.kind === "ships" && (
+          <VesselExtras mmsi={selected.id} name={selected.name} />
+        )}
 
         {/* CCTV mock viewport */}
         {selected.kind === "cctv" && (

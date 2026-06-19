@@ -9,12 +9,19 @@ interface IntelLine {
   tone: "info" | "warn" | "alert" | "ok";
 }
 
+/** which contextual side panel the right rail has open (null = collapsed) */
+export type RightPanel = "intel" | "selected" | "layers";
+
 interface WorldViewState {
   layers: Record<LayerId, boolean>;
   toggleLayer: (id: LayerId) => void;
 
   selected: FeedEntity | null;
   setSelected: (e: FeedEntity | null) => void;
+
+  rightPanel: RightPanel | null;
+  toggleRightPanel: (p: RightPanel) => void;
+  setRightPanel: (p: RightPanel | null) => void;
 
   counts: Record<LayerId, number>;
   setCount: (id: LayerId, n: number) => void;
@@ -42,7 +49,18 @@ export const useWorldView = create<WorldViewState>((set) => ({
     set((s) => ({ layers: { ...s.layers, [id]: !s.layers[id] } })),
 
   selected: null,
-  setSelected: (e) => set({ selected: e }),
+  // picking an entity on the globe auto-opens the SELECTED panel; clearing the
+  // selection leaves whatever panel is open (the body shows an empty state).
+  setSelected: (e) =>
+    set((s) => ({
+      selected: e,
+      rightPanel: e ? "selected" : s.rightPanel,
+    })),
+
+  rightPanel: null,
+  toggleRightPanel: (p) =>
+    set((s) => ({ rightPanel: s.rightPanel === p ? null : p })),
+  setRightPanel: (p) => set({ rightPanel: p }),
 
   counts: initialCounts,
   setCount: (id, n) => set((s) => ({ counts: { ...s.counts, [id]: n } })),

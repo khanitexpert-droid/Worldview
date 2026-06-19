@@ -15,14 +15,12 @@ import {
   fetchSatellites,
   fetchTraffic,
 } from "@/lib/feeds";
-import type { Flight, FeedEntity, LayerId } from "@/lib/types";
+import type { Flight, Ship, FeedEntity, LayerId } from "@/lib/types";
 
 import TopBar from "./hud/TopBar";
-import DataLayersPanel from "./hud/DataLayersPanel";
 import Controls from "./hud/Controls";
 import StatusBar from "./hud/StatusBar";
-import IntelFeed from "./hud/IntelFeed";
-import EntityDetail from "./hud/EntityDetail";
+import RightRail from "./hud/RightRail";
 
 // ---- palette ----
 const C = {
@@ -42,6 +40,23 @@ const PLANE_SVG =
   "<path d='M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z' " +
   "fill='#ff2d95' stroke='#2a0418' stroke-width='0.7' stroke-linejoin='round'/></svg>";
 const PLANE_IMAGE = `data:image/svg+xml,${encodeURIComponent(PLANE_SVG)}`;
+
+// vessel hull pointing "up" (north); each ship's billboard is rotated to its
+// course over ground. Filled white + dark outline so it can be tinted per
+// vessel type via the billboard's `color` (white × tint = tint).
+const SHIP_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
+  "<path d='M12 2 L17 9 L16 21 L8 21 L7 9 Z' " +
+  "fill='#ffffff' stroke='#06303a' stroke-width='1.2' stroke-linejoin='round'/></svg>";
+const SHIP_IMAGE = `data:image/svg+xml,${encodeURIComponent(SHIP_SVG)}`;
+// non-directional marker for stationary (moored/anchored) vessels — a course
+// arrow would be meaningless at zero speed, so show a simple dot instead.
+const SHIP_DOT_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
+  "<circle cx='12' cy='12' r='6' fill='#ffffff' stroke='#06303a' stroke-width='1.4'/></svg>";
+const SHIP_DOT_IMAGE = `data:image/svg+xml,${encodeURIComponent(SHIP_DOT_SVG)}`;
+// below this ground speed (m/s ≈ 0.6 kn) a vessel is treated as stationary
+const SHIP_MOVING_MS = 0.3;
 
 const POLL_MS: Record<LayerId, number> = {
   flights: 15000,
@@ -64,10 +79,10 @@ const FETCHERS: Record<
   traffic: fetchTraffic,
 };
 
-// layers handled by the generic (snap-on-poll) renderer — flights are special
-// (interpolated every frame), so they're excluded here.
+// layers handled by the generic (snap-on-poll) renderer — flights and ships are
+// special (interpolated every frame), so they're excluded here.
 const STATIC_LAYERS = (Object.keys(FETCHERS) as LayerId[]).filter(
-  (id) => id !== "flights"
+  (id) => id !== "flights" && id !== "ships"
 );
 
 function quakeColor(mag: number): Cesium.Color {
@@ -90,6 +105,30 @@ function trafficColor(level: string): Cesium.Color {
   }
 }
 
+// tint per AIS vessel category (white glyph × this color)
+function vesselColor(type: string): Cesium.Color {
+  switch (type) {
+    case "CARGO":
+      return C.green;
+    case "TANKER":
+      return C.amber;
+    case "PASSENGER":
+      return C.magenta;
+    case "HIGH-SPEED":
+      return C.cyan;
+    case "TUG":
+    case "SPECIAL CRAFT":
+      return C.violet;
+    case "FISHING":
+      return Cesium.Color.fromCssColorString("#5dffd0");
+    case "SAILING":
+    case "PLEASURE CRAFT":
+      return Cesium.Color.fromCssColorString("#9be7ff");
+    default:
+      return C.cyan; // VESSEL / unknown
+  }
+}
+
 type SelMap = Map<string, FeedEntity>;
 
 // live state for one aircraft. We keep a "truth" target (tLon/tLat/tAlt) that
@@ -109,9 +148,22 @@ interface FlightState {
 }
 
 const M_PER_DEG_LAT = 111_320;
+const KN_TO_MS = 0.514444;
 // time constant for easing the displayed position toward the truth (seconds).
 // ~0.8s feels smooth without lagging noticeably behind the real position.
 const EASE_TAU = 0.8;
+
+// live state for one vessel — same dead-reckon + ease model as aircraft, but
+// ships move along their course over ground (no altitude / on-ground concept).
+interface ShipState {
+  lon: number; // displayed (rendered)
+  lat: number;
+  tLon: number; // truth target
+  tLat: number;
+  heading: number; // deg (course over ground)
+  velocity: number; // m/s
+  color: Cesium.Color; // tint by vessel type
+}
 
 function renderLayer(
   ds: Cesium.CustomDataSource,
@@ -120,24 +172,6 @@ function renderLayer(
   sel: SelMap
 ) {
   ds.entities.removeAll();
-
-  if (id === "ships") {
-    for (const s of items as import("@/lib/types").Ship[]) {
-      const eid = `ships:${s.id}`;
-      ds.entities.add({
-        id: eid,
-        position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 0),
-        point: {
-          pixelSize: 5,
-          color: C.cyan,
-          outlineColor: Cesium.Color.fromCssColorString("#06303a"),
-          outlineWidth: 1,
-        },
-      });
-      sel.set(eid, { kind: "ships", ...s });
-    }
-    return;
-  }
 
   if (id === "satellites") {
     for (const s of items as import("@/lib/types").Satellite[]) {
@@ -225,6 +259,9 @@ export default function WorldView() {
   // ---- flight interpolation state ----
   const flightDsRef = useRef<Cesium.CustomDataSource | null>(null);
   const flightStateRef = useRef<Map<string, FlightState>>(new Map());
+  // ---- ship interpolation state ----
+  const shipDsRef = useRef<Cesium.CustomDataSource | null>(null);
+  const shipStateRef = useRef<Map<string, ShipState>>(new Map());
   const lastTickRef = useRef(0);
   // once we've seen a real feed, ignore synthetic-fallback polls so the map
   // doesn't flip-flop between thousands of real planes and 240 placeholders.
@@ -303,6 +340,11 @@ export default function WorldView() {
     viewer.dataSources.add(flightDs);
     flightDsRef.current = flightDs;
 
+    // dedicated datasource for interpolated ships
+    const shipDs = new Cesium.CustomDataSource("ships-live");
+    viewer.dataSources.add(shipDs);
+    shipDsRef.current = shipDs;
+
     // ---- per-frame: dead-reckon the truth target, ease the display to it ----
     lastTickRef.current = performance.now();
     const onTick = () => {
@@ -339,6 +381,28 @@ export default function WorldView() {
         st.lat += (st.tLat - st.lat) * k;
         st.alt += (st.tAlt - st.alt) * k;
       });
+
+      // same model for ships (no altitude)
+      shipStateRef.current.forEach((st) => {
+        if (st.velocity) {
+          const dist = st.velocity * dt;
+          const th = Cesium.Math.toRadians(st.heading);
+          const cosLat = Math.cos(Cesium.Math.toRadians(st.tLat)) || 1e-6;
+          st.tLat += (dist * Math.cos(th)) / M_PER_DEG_LAT;
+          st.tLon += (dist * Math.sin(th)) / (M_PER_DEG_LAT * cosLat);
+          if (st.tLat > 89) st.tLat = 89;
+          if (st.tLat < -89) st.tLat = -89;
+          if (st.tLon > 180) st.tLon -= 360;
+          if (st.tLon < -180) st.tLon += 360;
+        }
+        let dLon = st.tLon - st.lon;
+        if (dLon > 180) dLon -= 360;
+        else if (dLon < -180) dLon += 360;
+        st.lon += dLon * k;
+        if (st.lon > 180) st.lon -= 360;
+        else if (st.lon < -180) st.lon += 360;
+        st.lat += (st.tLat - st.lat) * k;
+      });
     };
     viewer.clock.onTick.addEventListener(onTick);
 
@@ -371,6 +435,11 @@ export default function WorldView() {
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
     setReady(true);
+
+    // dev-only handle for debugging/verification (stripped from prod bundles)
+    if (process.env.NODE_ENV !== "production") {
+      (window as unknown as { __wvViewer?: Cesium.Viewer }).__wvViewer = viewer;
+    }
 
     return () => {
       viewer.clock.onTick.removeEventListener(onTick);
@@ -523,14 +592,122 @@ export default function WorldView() {
     }
   }, [data.flights, layers.flights, ready]);
 
+  // ---- ships: reconcile interpolation state on each poll (no full rebuild) ----
+  useEffect(() => {
+    const ds = shipDsRef.current;
+    if (!ds || !ready) return;
+    ds.show = layers.ships;
+
+    if (!layers.ships) {
+      ds.entities.removeAll();
+      shipStateRef.current.clear();
+      for (const k of [...selMapRef.current.keys()]) {
+        if (k.startsWith("ships:")) selMapRef.current.delete(k);
+      }
+      return;
+    }
+
+    const items = data.ships as Ship[];
+    const seen = new Set<string>();
+    const nowMs = Date.now();
+
+    for (const s of items) {
+      seen.add(s.id);
+      const vel = s.speed * KN_TO_MS;
+
+      // propagate the reported fix to "now" using its own timestamp.
+      let pLon = s.lon;
+      let pLat = s.lat;
+      const ageSec = Math.min(
+        Math.max((nowMs - (s.timePosition ?? nowMs)) / 1000, 0),
+        300
+      );
+      if (vel && ageSec > 0) {
+        const dist = vel * ageSec;
+        const th = Cesium.Math.toRadians(s.heading);
+        const cosLat = Math.cos(Cesium.Math.toRadians(s.lat)) || 1e-6;
+        pLat = s.lat + (dist * Math.cos(th)) / M_PER_DEG_LAT;
+        pLon = s.lon + (dist * Math.sin(th)) / (M_PER_DEG_LAT * cosLat);
+        if (pLon > 180) pLon -= 360;
+        else if (pLon < -180) pLon += 360;
+      }
+
+      const st = shipStateRef.current.get(s.id);
+      if (st) {
+        st.tLon = pLon;
+        st.tLat = pLat;
+        st.heading = s.heading;
+        st.velocity = vel;
+        st.color = vesselColor(s.type);
+      } else {
+        shipStateRef.current.set(s.id, {
+          lon: pLon,
+          lat: pLat,
+          tLon: pLon,
+          tLat: pLat,
+          heading: s.heading,
+          velocity: vel,
+          color: vesselColor(s.type),
+        });
+        const id = s.id;
+        ds.entities.add({
+          id: `ships:${id}`,
+          position: new Cesium.CallbackPositionProperty(() => {
+            const cur = shipStateRef.current.get(id);
+            return cur
+              ? Cesium.Cartesian3.fromDegrees(cur.lon, cur.lat, 0)
+              : Cesium.Cartesian3.ZERO;
+          }, false),
+          billboard: {
+            // hull glyph when under way, plain dot when stationary
+            image: new Cesium.CallbackProperty(() => {
+              const cur = shipStateRef.current.get(id);
+              return cur && cur.velocity > SHIP_MOVING_MS
+                ? SHIP_IMAGE
+                : SHIP_DOT_IMAGE;
+            }, false),
+            width: 15,
+            height: 15,
+            // tint white glyph by vessel type
+            color: new Cesium.CallbackProperty(
+              () => shipStateRef.current.get(id)?.color ?? C.cyan,
+              false
+            ),
+            // billboard.rotation is counter-clockwise; course is clockwise from
+            // north, so negate. Stationary vessels stay upright (dot).
+            rotation: new Cesium.CallbackProperty(() => {
+              const cur = shipStateRef.current.get(id);
+              return cur && cur.velocity > SHIP_MOVING_MS
+                ? -Cesium.Math.toRadians(cur.heading)
+                : 0;
+            }, false),
+            alignedAxis: Cesium.Cartesian3.ZERO,
+          },
+        });
+      }
+      selMapRef.current.set(`ships:${s.id}`, { kind: "ships", ...s });
+    }
+
+    // drop vessels that fell out of the feed
+    for (const id of [...shipStateRef.current.keys()]) {
+      if (!seen.has(id)) {
+        shipStateRef.current.delete(id);
+        ds.entities.removeById(`ships:${id}`);
+        selMapRef.current.delete(`ships:${id}`);
+      }
+    }
+  }, [data.ships, layers.ships, ready]);
+
   // ---- render the snap-on-poll layers when data/layers change ----
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !ready) return;
 
-    // refresh selection entries for static layers only (flights manage theirs)
+    // refresh selection entries for static layers only (flights + ships manage theirs)
     for (const k of [...selMapRef.current.keys()]) {
-      if (!k.startsWith("flights:")) selMapRef.current.delete(k);
+      if (!k.startsWith("flights:") && !k.startsWith("ships:")) {
+        selMapRef.current.delete(k);
+      }
     }
 
     STATIC_LAYERS.forEach((id) => {
@@ -611,6 +788,25 @@ export default function WorldView() {
       });
       return;
     }
+    // for a moving vessel, track its live interpolated position
+    if (selected.kind === "ships") {
+      const id = selected.id;
+      ds.entities.add({
+        position: new Cesium.CallbackPositionProperty(() => {
+          const s = shipStateRef.current.get(id);
+          return s
+            ? Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 0)
+            : Cesium.Cartesian3.ZERO;
+        }, false),
+        point: {
+          pixelSize: 24,
+          color: Cesium.Color.TRANSPARENT,
+          outlineColor: C.cyan,
+          outlineWidth: 2,
+        },
+      });
+      return;
+    }
     const e = selected as unknown as { lon: number; lat: number; altKm?: number };
     const height =
       selected.kind === "satellites" ? (selected.altKm ?? 0) * 1000 : 0;
@@ -629,11 +825,9 @@ export default function WorldView() {
     <div className="relative h-full w-full overflow-hidden">
       <div ref={containerRef} className="absolute inset-0" />
       <TopBar />
-      <DataLayersPanel />
       <Controls onReset={resetView} onLocate={locateMe} />
       <StatusBar />
-      <IntelFeed onFocus={flyTo} />
-      <EntityDetail onFlyTo={flyTo} />
+      <RightRail onFlyTo={flyTo} />
     </div>
   );
 }
