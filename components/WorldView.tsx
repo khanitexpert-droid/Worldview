@@ -60,7 +60,9 @@ const SHIP_MOVING_MS = 0.3;
 
 const POLL_MS: Record<LayerId, number> = {
   flights: 15000,
-  ships: 12000,
+  // ships refresh slowly upstream (VesselAPI free-tier quota) and the client
+  // dead-reckons between snapshots, so polling often just re-fetches the cache.
+  ships: 60000,
   satellites: 10000,
   earthquakes: 60000,
   cctv: 60000,

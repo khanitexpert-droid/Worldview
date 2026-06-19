@@ -15,34 +15,30 @@ export const maxDuration = 20;
 // ============================================================================
 
 const BASE = "https://api.vesselapi.com/v1/location/vessels/bounding-box";
-const FRESH_TTL = 45_000;
-const STALE_TTL = 10 * 60_000;
+// Refresh upstream sparingly to stay well under VesselAPI's free-tier quota —
+// the client dead-reckons ship positions between snapshots, so a 5-min refresh
+// still looks live. With ~8 regions that's ~8 upstream calls per 5 min while
+// the site is being viewed (and zero when nobody is on it).
+const FRESH_TTL = 5 * 60_000;
+const STALE_TTL = 30 * 60_000;
 const PER_BOX = 50;
 
 let cache: { items: Ship[]; ts: number; source: string } | null = null;
 let inflight: Promise<Ship[]> | null = null;
 
-// busy maritime regions [latBottom, latTop, lonLeft, lonRight] — each box keeps
-// |dLat| + |dLon| <= 4 (VesselAPI's span limit).
+// A small set of the world's busiest maritime hubs, spread across regions for a
+// global look. Each box keeps |dLat| + |dLon| <= 4 (VesselAPI's span limit) and
+// returns up to 50 vessels — ~400 ships total. Kept short on purpose to limit
+// upstream request volume (see FRESH_TTL note above).
 const REGIONS: [number, number, number, number][] = [
   [51.0, 53.0, 2.0, 4.0], // North Sea / Rotterdam
   [50.0, 51.5, 0.0, 1.8], // English Channel / Dover
-  [53.3, 54.2, 8.0, 9.4], // German Bight / Hamburg
   [35.7, 36.6, -6.0, -4.8], // Gibraltar
-  [37.8, 39.0, 25.5, 27.0], // Aegean
-  [40.8, 41.5, 28.7, 29.4], // Bosphorus / Istanbul
   [31.0, 32.0, 32.0, 33.4], // Suez / Port Said
   [24.8, 26.2, 54.8, 56.2], // Persian Gulf / Hormuz / Dubai
-  [18.7, 19.4, 72.5, 73.2], // Mumbai
   [0.8, 1.7, 103.4, 104.5], // Singapore Strait
-  [22.0, 23.2, 113.5, 114.7], // Hong Kong / Pearl River
   [30.5, 31.9, 121.4, 122.8], // Shanghai / Yangtze
-  [34.7, 35.7, 139.5, 140.5], // Tokyo Bay
   [40.3, 41.0, -74.4, -73.6], // New York / New Jersey
-  [33.4, 34.1, -118.6, -117.9], // LA / Long Beach
-  [28.7, 29.8, -95.1, -94.2], // Houston / Galveston
-  [8.7, 9.6, -80.1, -79.3], // Panama (Caribbean side)
-  [-24.2, -23.4, -46.6, -45.9], // Santos / Brazil
 ];
 
 const NAV_STATUS: Record<number, string> = {
