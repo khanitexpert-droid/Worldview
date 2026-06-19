@@ -5,7 +5,6 @@ import { LAYERS } from "@/lib/layers";
 import LayersBody from "./DataLayersPanel";
 import IntelBody from "./IntelFeed";
 import EntityBody from "./EntityDetail";
-import SatellitesBody from "./SatellitesPanel";
 
 interface Tab {
   id: RightPanel;
@@ -17,7 +16,6 @@ const TABS: Tab[] = [
   { id: "selected", icon: "⌖", label: "SELECTED" },
   { id: "intel", icon: "≣", label: "INTEL FEED" },
   { id: "layers", icon: "▦", label: "DATA LAYERS" },
-  { id: "sats", icon: "🛰", label: "SATELLITES" },
 ];
 
 export default function RightRail({
@@ -30,7 +28,6 @@ export default function RightRail({
   const setPanel = useWorldView((s) => s.setRightPanel);
   const selected = useWorldView((s) => s.selected);
   const layers = useWorldView((s) => s.layers);
-  const counts = useWorldView((s) => s.counts);
   const intelCount = useWorldView((s) => s.intel.length);
 
   const activeLayers = LAYERS.filter((l) => layers[l.id]).length;
@@ -52,14 +49,6 @@ export default function RightRail({
           {activeLayers}
         </span>
       );
-    if (id === "sats")
-      return layers.satellites && counts.satellites > 0 ? (
-        <span className="absolute -right-1 -top-1 min-w-[14px] rounded-full border border-wv-border bg-wv-darker px-1 text-center text-[8px] font-bold leading-[13px] text-wv-violet">
-          {counts.satellites >= 1000
-            ? `${(counts.satellites / 1000).toFixed(1)}k`
-            : counts.satellites}
-        </span>
-      ) : null;
     return null;
   };
 
@@ -95,7 +84,6 @@ export default function RightRail({
             {active.id === "selected" && <EntityBody onFlyTo={onFlyTo} />}
             {active.id === "intel" && <IntelBody />}
             {active.id === "layers" && <LayersBody />}
-            {active.id === "sats" && <SatellitesBody />}
           </div>
         </div>
       )}

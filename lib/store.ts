@@ -10,7 +10,7 @@ interface IntelLine {
 }
 
 /** which contextual side panel the right rail has open (null = collapsed) */
-export type RightPanel = "intel" | "selected" | "layers" | "sats";
+export type RightPanel = "intel" | "selected" | "layers";
 
 /** open-data provenance + freshness for the SATELLITES panel */
 export interface SatMeta {
