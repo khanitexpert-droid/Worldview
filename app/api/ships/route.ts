@@ -1,4 +1,3 @@
-import WebSocket from "ws";
 import type { Ship } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -6,47 +5,45 @@ export const revalidate = 0;
 export const maxDuration = 20;
 
 // ============================================================================
-// Real global AIS via aisstream.io (WebSocket). Serverless functions can't hold
-// a socket open across requests, so each refresh opens the stream, gathers a
-// few seconds of position reports worldwide, dedupes by MMSI, and returns a
-// snapshot. The client interpolates between snapshots (course + speed) so
-// vessels glide smoothly. We cache the snapshot for FRESH_TTL so the stream is
-// only opened ~once every 30s no matter how many clients poll, and fall back to
-// a coherent synthetic feed if the key is missing or the stream fails.
+// Real AIS via VesselAPI (HTTP/REST — works from Vercel, unlike the aisstream
+// WebSocket which only streams to residential IPs). Each bounding-box query is
+// capped at 50 vessels and a 4° total span, so we sweep ~15 boxes over the
+// world's busiest ports / chokepoints and merge them. Cached so upstream is hit
+// at most ~once per FRESH_TTL no matter how many clients poll; the client
+// interpolates between snapshots. Falls back to a synthetic feed if the key is
+// missing or the API fails.
 // ============================================================================
 
-const GATHER_MS = 4500; // how long to listen before returning a snapshot
-const MAX_SHIPS = 4000;
-const FRESH_TTL = 30_000;
+const BASE = "https://api.vesselapi.com/v1/location/vessels/bounding-box";
+const FRESH_TTL = 45_000;
 const STALE_TTL = 10 * 60_000;
+const PER_BOX = 50;
 
 let cache: { items: Ship[]; ts: number; source: string } | null = null;
 let inflight: Promise<Ship[]> | null = null;
-// temporary diagnostic: what the last aisstream gather actually did
-let lastDiag: Record<string, unknown> = { note: "no gather yet" };
 
-// Persistent (across requests, while the lambda stays warm) accumulator of AIS
-// type-5 static data keyed by MMSI. Static messages are broadcast only every
-// ~6 min, so any single snapshot sees very few — but by remembering them we
-// build up particulars (IMO, dimensions, callsign, ETA…) for more and more
-// vessels the longer the app runs. Capped so it can't grow without bound.
-const staticCache = new Map<number, AisStatic>();
-const STATIC_CACHE_MAX = 60_000;
-
-// ---- AIS code → label maps ----
-function shipType(t?: number): string {
-  if (t == null) return "VESSEL";
-  if (t >= 70 && t <= 79) return "CARGO";
-  if (t >= 80 && t <= 89) return "TANKER";
-  if (t >= 60 && t <= 69) return "PASSENGER";
-  if (t >= 40 && t <= 49) return "HIGH-SPEED";
-  if (t >= 50 && t <= 59) return "SPECIAL CRAFT";
-  if (t === 30) return "FISHING";
-  if (t === 31 || t === 32 || t === 52) return "TUG";
-  if (t === 36) return "SAILING";
-  if (t === 37) return "PLEASURE CRAFT";
-  return "VESSEL";
-}
+// busy maritime regions [latBottom, latTop, lonLeft, lonRight] — each box keeps
+// |dLat| + |dLon| <= 4 (VesselAPI's span limit).
+const REGIONS: [number, number, number, number][] = [
+  [51.0, 53.0, 2.0, 4.0], // North Sea / Rotterdam
+  [50.0, 51.5, 0.0, 1.8], // English Channel / Dover
+  [53.3, 54.2, 8.0, 9.4], // German Bight / Hamburg
+  [35.7, 36.6, -6.0, -4.8], // Gibraltar
+  [37.8, 39.0, 25.5, 27.0], // Aegean
+  [40.8, 41.5, 28.7, 29.4], // Bosphorus / Istanbul
+  [31.0, 32.0, 32.0, 33.4], // Suez / Port Said
+  [24.8, 26.2, 54.8, 56.2], // Persian Gulf / Hormuz / Dubai
+  [18.7, 19.4, 72.5, 73.2], // Mumbai
+  [0.8, 1.7, 103.4, 104.5], // Singapore Strait
+  [22.0, 23.2, 113.5, 114.7], // Hong Kong / Pearl River
+  [30.5, 31.9, 121.4, 122.8], // Shanghai / Yangtze
+  [34.7, 35.7, 139.5, 140.5], // Tokyo Bay
+  [40.3, 41.0, -74.4, -73.6], // New York / New Jersey
+  [33.4, 34.1, -118.6, -117.9], // LA / Long Beach
+  [28.7, 29.8, -95.1, -94.2], // Houston / Galveston
+  [8.7, 9.6, -80.1, -79.3], // Panama (Caribbean side)
+  [-24.2, -23.4, -46.6, -45.9], // Santos / Brazil
+];
 
 const NAV_STATUS: Record<number, string> = {
   0: "UNDER WAY (ENGINE)",
@@ -59,6 +56,20 @@ const NAV_STATUS: Record<number, string> = {
   7: "FISHING",
   8: "UNDER WAY (SAILING)",
 };
+
+// VesselAPI vessel_type is a free-text string ("Container Ship", "Oil Tanker"…)
+function vesselType(t?: string): string {
+  if (!t) return "VESSEL";
+  const s = t.toLowerCase();
+  if (s.includes("tanker")) return "TANKER";
+  if (/cargo|container|bulk|carrier|freight/.test(s)) return "CARGO";
+  if (/passenger|cruise|ferry/.test(s)) return "PASSENGER";
+  if (s.includes("tug")) return "TUG";
+  if (s.includes("fishing")) return "FISHING";
+  if (/sailing|pleasure|yacht/.test(s)) return "SAILING";
+  if (/high.?speed|hsc/.test(s)) return "HIGH-SPEED";
+  return "VESSEL";
+}
 
 // MMSI MID (first 3 digits) → flag. Common maritime nations; falls back to "".
 const MID_FLAG: Record<string, string> = {
@@ -85,170 +96,65 @@ function flagOf(mmsi: number): string | undefined {
   return MID_FLAG[String(mmsi).slice(0, 3)];
 }
 
-// ---------- aisstream message shapes (only the fields we read) ----------
-interface AisMeta {
-  MMSI: number;
-  ShipName?: string;
-  latitude?: number;
-  longitude?: number;
-  time_utc?: string;
-}
-interface AisPosition {
-  Cog?: number;
-  Sog?: number;
-  TrueHeading?: number;
-  Latitude?: number;
-  Longitude?: number;
-  NavigationalStatus?: number;
-}
-interface AisStatic {
-  Type?: number;
-  Destination?: string;
-  ImoNumber?: number;
-  CallSign?: string;
-  MaximumStaticDraught?: number;
-  Dimension?: { A?: number; B?: number; C?: number; D?: number };
-  Eta?: { Month?: number; Day?: number; Hour?: number; Minute?: number };
+interface VaVessel {
+  mmsi: number;
+  imo?: number;
+  vessel_name?: string;
+  latitude: number;
+  longitude: number;
+  cog?: number;
+  sog?: number;
+  heading?: number;
+  nav_status?: number;
+  vessel_type?: string;
+  timestamp?: string;
 }
 
-// AIS dimensions are distances from the transponder to bow (A), stern (B),
-// port (C) and starboard (D); length = A+B, beam = C+D.
-function dims(d?: AisStatic["Dimension"]): { length?: number; beam?: number } {
-  if (!d) return {};
-  const length = (d.A ?? 0) + (d.B ?? 0);
-  const beam = (d.C ?? 0) + (d.D ?? 0);
-  return { length: length || undefined, beam: beam || undefined };
-}
-
-function formatEta(e?: AisStatic["Eta"]): string | undefined {
-  if (!e || !e.Month || !e.Day) return undefined; // month 0 / day 0 = N/A
-  const hh = String(e.Hour ?? 0).padStart(2, "0");
-  const mm = String(e.Minute ?? 0).padStart(2, "0");
-  if ((e.Hour ?? 24) >= 24) return undefined;
-  return `${String(e.Day).padStart(2, "0")}/${String(e.Month).padStart(2, "0")} ${hh}:${mm}Z`;
-}
-interface AisMessage {
-  MessageType: string;
-  MetaData: AisMeta;
-  Message: {
-    PositionReport?: AisPosition;
-    ShipStaticData?: AisStatic;
-  };
-}
-
-function gatherSnapshot(apiKey: string): Promise<Ship[]> {
-  return new Promise((resolve, reject) => {
-    const positions = new Map<number, Ship>();
-    let settled = false;
-    let opened = false;
-    let rawMsgs = 0;
-
-    const ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
-
-    const finish = (err?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try {
-        ws.close();
-      } catch {
-        /* ignore */
-      }
-      lastDiag = {
-        opened,
-        rawMsgs,
-        positions: positions.size,
-        error: err?.message ?? null,
-        at: new Date().toISOString(),
-      };
-      if (err && positions.size === 0) return reject(err);
-      // merge accumulated static data (type / particulars) into positions
-      const ships: Ship[] = [];
-      for (const [mmsi, s] of positions) {
-        const st = staticCache.get(mmsi);
-        const { length, beam } = dims(st?.Dimension);
-        ships.push({
-          ...s,
-          type: shipType(st?.Type),
-          destination: st?.Destination?.trim() || undefined,
-          imo: st?.ImoNumber || undefined,
-          callsign: st?.CallSign?.trim() || undefined,
-          draught: st?.MaximumStaticDraught || undefined,
-          eta: formatEta(st?.Eta),
-          length,
-          beam,
-        });
-      }
-      resolve(ships.slice(0, MAX_SHIPS));
-    };
-
-    const timer = setTimeout(() => finish(), GATHER_MS);
-
-    ws.on("open", () => {
-      opened = true;
-      ws.send(
-        JSON.stringify({
-          APIKey: apiKey,
-          BoundingBoxes: [
-            [
-              [-90, -180],
-              [90, 180],
-            ],
-          ],
-          FilterMessageTypes: ["PositionReport", "ShipStaticData"],
-        })
-      );
-    });
-
-    ws.on("message", (raw: Buffer) => {
-      rawMsgs++;
-      let msg: AisMessage;
-      try {
-        msg = JSON.parse(raw.toString());
-      } catch {
-        return;
-      }
-      const meta = msg.MetaData;
-      if (!meta || typeof meta.MMSI !== "number") return;
-
-      if (msg.MessageType === "ShipStaticData" && msg.Message.ShipStaticData) {
-        if (
-          staticCache.size < STATIC_CACHE_MAX ||
-          staticCache.has(meta.MMSI)
-        ) {
-          staticCache.set(meta.MMSI, msg.Message.ShipStaticData);
-        }
-        return;
-      }
-
-      const pr = msg.Message.PositionReport;
-      if (!pr) return;
-      const lat = pr.Latitude ?? meta.latitude;
-      const lon = pr.Longitude ?? meta.longitude;
-      if (typeof lat !== "number" || typeof lon !== "number") return;
-
-      positions.set(meta.MMSI, {
-        id: String(meta.MMSI),
-        name: meta.ShipName?.trim() || `MMSI ${meta.MMSI}`,
-        lat,
-        lon,
-        heading: pr.Cog ?? pr.TrueHeading ?? 0,
-        speed: pr.Sog ?? 0, // knots
-        type: "VESSEL",
-        status:
-          pr.NavigationalStatus != null
-            ? NAV_STATUS[pr.NavigationalStatus]
-            : undefined,
-        flag: flagOf(meta.MMSI),
-        timePosition: meta.time_utc ? Date.parse(meta.time_utc) : Date.now(),
-      });
-
-      if (positions.size >= MAX_SHIPS) finish();
-    });
-
-    ws.on("error", (e: Error) => finish(e));
-    ws.on("close", () => finish());
+async function fetchRegion(
+  apiKey: string,
+  [latB, latT, lonL, lonR]: [number, number, number, number]
+): Promise<Ship[]> {
+  const url =
+    `${BASE}?filter.latBottom=${latB}&filter.latTop=${latT}` +
+    `&filter.lonLeft=${lonL}&filter.lonRight=${lonR}&pagination.limit=${PER_BOX}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    cache: "no-store",
+    signal: AbortSignal.timeout(9000),
   });
+  if (!res.ok) throw new Error(`vesselapi ${res.status}`);
+  const json = (await res.json()) as { vessels?: VaVessel[] };
+  return (json.vessels ?? [])
+    .filter((v) => typeof v.latitude === "number" && typeof v.longitude === "number")
+    .map((v) => ({
+      id: String(v.mmsi),
+      name: v.vessel_name?.trim() || `MMSI ${v.mmsi}`,
+      lat: v.latitude,
+      lon: v.longitude,
+      heading: v.cog ?? v.heading ?? 0,
+      speed: v.sog ?? 0,
+      type: vesselType(v.vessel_type),
+      status: v.nav_status != null ? NAV_STATUS[v.nav_status] : undefined,
+      flag: flagOf(v.mmsi),
+      imo: v.imo || undefined,
+      timePosition: v.timestamp ? Date.parse(v.timestamp) : Date.now(),
+    }));
+}
+
+async function fetchVesselApi(apiKey: string): Promise<Ship[]> {
+  const results = await Promise.allSettled(
+    REGIONS.map((box) => fetchRegion(apiKey, box))
+  );
+  const byId = new Map<string, Ship>();
+  let ok = 0;
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      ok++;
+      for (const s of r.value) byId.set(s.id, s);
+    }
+  }
+  if (ok === 0) throw new Error("all vesselapi regions failed");
+  return [...byId.values()];
 }
 
 export async function GET() {
@@ -257,42 +163,31 @@ export async function GET() {
     return Response.json({ items: cache.items, source: cache.source, live: true });
   }
 
-  const apiKey = process.env.AISSTREAM_API_KEY;
+  const apiKey = process.env.VESSELAPI_API_KEY;
   if (!apiKey) {
-    return Response.json({
-      items: syntheticShips(),
-      source: "sim-ais",
-      live: false,
-      diag: { keyMissing: true },
-    });
+    return Response.json({ items: syntheticShips(), source: "sim-ais", live: false });
   }
 
   try {
-    // de-dupe concurrent cold requests onto one stream open
-    if (!inflight) inflight = gatherSnapshot(apiKey);
+    if (!inflight) inflight = fetchVesselApi(apiKey);
     const items = await inflight;
     inflight = null;
     if (items.length) {
-      cache = { items, ts: Date.now(), source: "aisstream" };
-      return Response.json({ items, source: "aisstream", live: true });
+      cache = { items, ts: Date.now(), source: "vesselapi" };
+      return Response.json({ items, source: "vesselapi", live: true });
     }
   } catch (e) {
     inflight = null;
-    console.error("[ships] aisstream failed:", e);
+    console.error("[ships] vesselapi failed:", e);
   }
 
   if (cache && now - cache.ts < STALE_TTL) {
     return Response.json({ items: cache.items, source: `${cache.source}-cached`, live: true });
   }
-  return Response.json({
-    items: syntheticShips(),
-    source: "sim-ais",
-    live: false,
-    diag: lastDiag,
-  });
+  return Response.json({ items: syntheticShips(), source: "sim-ais", live: false });
 }
 
-// ---- coherent synthetic fallback (used only if the key/stream is unavailable) ----
+// ---- coherent synthetic fallback (used only if the key/API is unavailable) ----
 const LANES: [number, number, string][] = [
   [4.0, 51.9, "ROTTERDAM"],
   [121.8, 31.2, "SHANGHAI"],
