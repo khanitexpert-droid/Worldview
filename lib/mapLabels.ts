@@ -82,7 +82,7 @@ export class MapLabels {
         horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         distanceDisplayCondition: DDC(2.4e6, 6e8),
-        scaleByDistance: NFS(3e6, 1.05, 6e7, 0.7),
+        scaleByDistance: NFS(3e6, 1.0, 6e7, 0.7),
         translucencyByDistance: NFS(3e6, 0.85, 6e7, 0.35),
       });
     }
@@ -104,21 +104,21 @@ export class MapLabels {
       });
     }
 
-    // ---- countries: clean uppercase, soft halo, fade when far ----
+    // ---- countries: bold BLACK with a white halo so they read on the imagery ----
     for (const [name, [lon, lat]] of Object.entries(COUNTRY_CENTROIDS)) {
       this.labels.add({
         position: ll(lon, lat),
         text: name.toUpperCase(),
-        font: `600 14px ${SANS}`,
-        fillColor: Cesium.Color.fromCssColorString("#efe7ff").withAlpha(0.95),
-        outlineColor: HALO.withAlpha(0.6),
-        outlineWidth: 2,
+        font: `700 15px ${SANS}`,
+        fillColor: Cesium.Color.BLACK,
+        outlineColor: Cesium.Color.WHITE.withAlpha(0.85),
+        outlineWidth: 3,
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
         horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         distanceDisplayCondition: DDC(0, 2.6e7),
-        scaleByDistance: NFS(1.2e6, 1.0, 2.4e7, 0.5),
-        translucencyByDistance: NFS(1.2e6, 1.0, 2.6e7, 0.4),
+        // never scale ABOVE 1.0 (upscaling blurs the rasterised text)
+        scaleByDistance: NFS(1.2e6, 1.0, 2.4e7, 0.62),
       });
     }
 

@@ -363,6 +363,10 @@ export default function WorldView() {
       return;
     }
     viewerRef.current = viewer;
+    // Render at the display's native resolution (capped at 2×) so text/labels and
+    // the globe are crisp — Cesium defaults to 1× CSS pixels, which looks soft on
+    // high-DPI screens.
+    viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 2);
 
     const scene = viewer.scene;
     scene.backgroundColor = Cesium.Color.fromCssColorString("#05030a");
