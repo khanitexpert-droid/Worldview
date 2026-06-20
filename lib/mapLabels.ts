@@ -116,12 +116,13 @@ export class MapLabels {
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
         horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
-        // hidden at the full-globe view; fade in once you zoom toward a region,
-        // so the planet isn't blanketed in ~130 names at once.
-        distanceDisplayCondition: DDC(0, 9e6),
-        translucencyByDistance: NFS(5e6, 1.0, 9e6, 0.0),
+        // Only appear once you've zoomed into a region (not a whole-continent
+        // sweep): hidden beyond ~5,000 km, fading in from ~4,500 km. Keeps the
+        // globe and continental views clean — names reveal as you zoom in.
+        distanceDisplayCondition: DDC(0, 5e6),
+        translucencyByDistance: NFS(3e6, 1.0, 5e6, 0.0),
         // never scale ABOVE 1.0 (upscaling blurs the rasterised text)
-        scaleByDistance: NFS(1.2e6, 1.0, 9e6, 0.7),
+        scaleByDistance: NFS(1.2e6, 1.0, 5e6, 0.75),
       });
     }
 
