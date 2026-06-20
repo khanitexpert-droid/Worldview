@@ -380,28 +380,30 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     scene.fog.enabled = true;
 
     // ---- realistic Earth that STAYS SHARP when you zoom in ----
-    // Base layer = Cesium World Imagery (Bing satellite, streamed in high-res
-    // tiles) so the ground stays crisp at any zoom. The NASA Blue Marble + cloud
-    // textures sit ON TOP and give the gorgeous from-orbit look — but they're
-    // single low-res tiles, so we FADE them out as the camera drops toward the
-    // surface, revealing the sharp satellite imagery underneath. Best of both:
-    // Blue Marble from space, real satellite detail up close. (Textures are
-    // bundled equirectangular JPEGs in /public/textures; the cloud one is white
-    // cloud on black, so colorToAlpha drops the black and keeps only the cloud.)
+    // CLEAN, NEVER-BLACK BASEMAP:
+    // - The NASA Blue Marble (single bundled texture) is the BOTTOM layer and
+    //   stays FULLY OPAQUE at all times, so the globe is always covered — no
+    //   black holes, even while satellite tiles are loading or if they fail.
+    // - Cesium World Imagery (Bing satellite) sits ABOVE it and FADES IN as the
+    //   camera drops toward the surface, giving sharp streamed tiles up close;
+    //   wherever those tiles lag or fail, the Blue Marble shows through (blurry
+    //   at worst) instead of going black.
+    // - The cloud sheet sits on top and fades out as you zoom in.
+    const bingLayer = viewer.imageryLayers.get(0); // default Cesium World Imagery
     let blueMarbleLayer: Cesium.ImageryLayer | null = null;
     let cloudLayer: Cesium.ImageryLayer | null = null;
-    // (fromUrl reads each image's dimensions itself — no tileWidth/Height opts)
     Cesium.SingleTileImageryProvider.fromUrl("/textures/earth_daymap.jpg")
       .then((dayProvider) => {
         if (viewer.isDestroyed()) return undefined;
         blueMarbleLayer = viewer.imageryLayers.addImageryProvider(dayProvider);
+        viewer.imageryLayers.lowerToBottom(blueMarbleLayer); // reliable opaque base
         return Cesium.SingleTileImageryProvider.fromUrl(
           "/textures/earth_clouds.jpg"
         );
       })
       .then((cloudProvider) => {
         if (!cloudProvider || viewer.isDestroyed()) return;
-        cloudLayer = viewer.imageryLayers.addImageryProvider(cloudProvider);
+        cloudLayer = viewer.imageryLayers.addImageryProvider(cloudProvider); // top
         cloudLayer.colorToAlpha = Cesium.Color.BLACK; // black sky → transparent
         cloudLayer.colorToAlphaThreshold = 0.18; // keep only the bright cloud
       })
@@ -409,16 +411,16 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
         console.error("[worldview] blue-marble imagery failed", err)
       );
 
-    // Crossfade Blue Marble → satellite by camera altitude (metres above ground).
-    const BM_FAR = 2.5e6; // ≥ ~2,500 km up: full Blue Marble overlay
-    const BM_NEAR = 4.0e5; // ≤ ~400 km up: overlay hidden, sharp satellite shows
+    // Blend by camera altitude (metres). t = 1 far (orbit) → 0 near (surface).
+    const BM_FAR = 2.5e6; // ≥ ~2,500 km up: pure Blue Marble look
+    const BM_NEAR = 4.0e5; // ≤ ~400 km up: sharp satellite fully faded in
     const blendBasemap = () => {
-      if (!blueMarbleLayer) return;
       const h = scene.camera.positionCartographic?.height ?? BM_FAR;
       let t = (h - BM_NEAR) / (BM_FAR - BM_NEAR);
       t = t < 0 ? 0 : t > 1 ? 1 : t;
-      blueMarbleLayer.alpha = t;
-      if (cloudLayer) cloudLayer.alpha = 0.78 * t;
+      if (bingLayer) bingLayer.alpha = 1 - t; // satellite fades IN as you zoom in
+      if (blueMarbleLayer) blueMarbleLayer.alpha = 1; // base stays fully opaque
+      if (cloudLayer) cloudLayer.alpha = 0.78 * t; // clouds fade out as you zoom in
     };
     scene.preRender.addEventListener(blendBasemap);
 
