@@ -1,157 +1,82 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-// label + dotted-leader + OK reveal
-const BOOT_LINES: { text: string; tone?: "magenta" | "cyan" }[] = [
-  { text: "ESTABLISHING SECURE UPLINK" },
-  { text: "INITIALISING CESIUM 3D RENDER CORE" },
-  { text: "MOUNTING ORBITAL IMAGERY TILES" },
-  { text: "LINKING GLOBAL ADS-B NETWORK" },
-  { text: "PROPAGATING CELESTRAK TLE CATALOG" },
-  { text: "TAPPING USGS SEISMIC BACKBONE" },
-  { text: "SYNCING AIS MARITIME RELAY" },
-  { text: "INDEXING GLOBAL CCTV GRID" },
-  { text: "PARSING GDELT GLOBAL EVENT STREAM" },
-  { text: "COMPILING POST-FX SHADERS" },
-  { text: "CALIBRATING TACTICAL HUD OVERLAY" },
-];
+/**
+ * Clean, professional loading splash. Shows the brand + a progress bar and
+ * auto-enters as soon as the globe is ready (no key press, no fake boot log),
+ * then fades smoothly into the map. `ready` is driven by the globe's init.
+ */
+export default function BootSequence({
+  ready,
+  onDone,
+}: {
+  ready: boolean;
+  onDone: () => void;
+}) {
+  const [pct, setPct] = useState(12);
+  const [leaving, setLeaving] = useState(false);
+  const start = useRef(0);
+  const done = useRef(false);
+  if (start.current === 0) start.current = Date.now();
 
-const DOTS = (s: string) => s + " " + ".".repeat(Math.max(2, 40 - s.length));
+  const finish = useCallback(() => {
+    if (done.current) return;
+    done.current = true;
+    setPct(100);
+    setLeaving(true);
+    setTimeout(onDone, 550); // matches the fade-out duration
+  }, [onDone]);
 
-type Phase = "booting" | "ready" | "entering";
-
-export default function BootSequence({ onDone }: { onDone: () => void }) {
-  const [visible, setVisible] = useState(0);
-  const [phase, setPhase] = useState<Phase>("booting");
-  const [sid, setSid] = useState("--------");
-  const [clock, setClock] = useState({ base: "----------------", ms: "---" });
-  const armed = useRef(false);
-
-  // client-only session id (avoids SSR hydration mismatch)
+  // indeterminate creep toward ~92% while the globe warms up
   useEffect(() => {
-    setSid(
-      Array.from(
-        { length: 8 },
-        () => "0123456789ABCDEF"[Math.floor(Math.random() * 16)]
-      ).join("")
+    const id = setInterval(
+      () => setPct((p) => (p < 92 ? p + (92 - p) * 0.06 + 0.4 : p)),
+      100
     );
+    return () => clearInterval(id);
   }, []);
 
-  // live UTC clock — ms races every frame like a stopwatch counter
+  // complete shortly after the globe reports ready (keeping a brief minimum so
+  // the brand registers); a hard fallback so we never hang on a slow load.
   useEffect(() => {
-    let raf = 0;
-    const p = (n: number, l = 2) => String(n).padStart(l, "0");
-    const tickClock = () => {
-      const d = new Date();
-      setClock({
-        base: `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(
-          d.getUTCDate()
-        )} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`,
-        ms: p(d.getUTCMilliseconds(), 3),
-      });
-      raf = requestAnimationFrame(tickClock);
-    };
-    raf = requestAnimationFrame(tickClock);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  // reveal lines one by one, then arm the "press any key" gate
+    if (!ready) return;
+    const wait = Math.max(0, 1100 - (Date.now() - start.current));
+    const t = setTimeout(finish, wait);
+    return () => clearTimeout(t);
+  }, [ready, finish]);
   useEffect(() => {
-    let i = 0;
-    const tick = () => {
-      i++;
-      setVisible(i);
-      if (i < BOOT_LINES.length) {
-        setTimeout(tick, 1000 + Math.random() * 360);
-      } else {
-        setTimeout(() => setPhase("ready"), 450);
-      }
-    };
-    const start = setTimeout(tick, 400);
-    return () => clearTimeout(start);
-  }, []);
-
-  // wait for any key / click / tap once ready
-  useEffect(() => {
-    if (phase !== "ready") return;
-    const enter = () => {
-      if (armed.current) return;
-      armed.current = true;
-      setPhase("entering");
-      // matches the crt-off animation duration
-      setTimeout(onDone, 600);
-    };
-    window.addEventListener("keydown", enter);
-    window.addEventListener("pointerdown", enter);
-    return () => {
-      window.removeEventListener("keydown", enter);
-      window.removeEventListener("pointerdown", enter);
-    };
-  }, [phase, onDone]);
-
-  const allDone = visible >= BOOT_LINES.length;
+    const t = setTimeout(finish, 7000);
+    return () => clearTimeout(t);
+  }, [finish]);
 
   return (
     <div
-      className={`fixed inset-0 z-[100] flex items-center justify-center bg-wv-black ${
-        phase === "entering" ? "crt-off" : "opacity-100"
+      className={`fixed inset-0 z-[100] flex items-center justify-center bg-wv-black transition-opacity duration-500 ${
+        leaving ? "pointer-events-none opacity-0" : "opacity-100"
       }`}
     >
-      <div className="w-full max-w-2xl px-8 font-mono text-[13px] leading-relaxed">
-        {/* header */}
-        <div className="text-wv-cyan glow-cyan text-base font-bold tracking-[0.18em]">
-          WORLD<span className="text-wv-magenta glow-magenta">VIEW</span>{" "}
-          TACTICAL INTELLIGENCE SYSTEM
-        </div>
-        <div className="mt-1 flex justify-between text-[10px] tracking-widest text-wv-muted">
-          <span>KERNEL v1.0.0 · SESSION {sid}</span>
-          <span className="tabular-nums">
-            {clock.base}.
-            <span className="text-wv-cyan">{clock.ms}</span>Z
-          </span>
-        </div>
-        <div className="my-3 h-px w-full bg-gradient-to-r from-wv-magenta/60 via-wv-border to-transparent" />
-
-        {/* boot lines */}
-        {BOOT_LINES.slice(0, visible).map((l, idx) => (
-          <div key={idx} className="text-wv-green">
-            <span className="text-wv-muted">{DOTS(l.text)}</span>
-            <span className="text-wv-green glow-cyan"> OK</span>
-            {idx === visible - 1 && !allDone && <span className="wv-cursor" />}
+      <div className="flex w-full max-w-xs flex-col items-center gap-6 px-8 text-center">
+        <div>
+          <div className="text-[32px] font-bold leading-none tracking-[0.16em]">
+            <span className="text-wv-cyan">WORLD</span>
+            <span className="text-wv-magenta">VIEW</span>
           </div>
-        ))}
+          <div className="mt-3 text-[10px] tracking-[0.34em] text-wv-muted">
+            LIVE GLOBAL ACTIVITY MAP
+          </div>
+        </div>
 
-        {/* status + gate */}
-        {allDone && (
-          <>
-            <div className="mt-4 font-bold tracking-[0.15em] text-wv-green glow-cyan">
-              ALL SYSTEMS NOMINAL
-            </div>
-            <div className="text-wv-magenta glow-magenta text-[11px] tracking-[0.2em]">
-              CLEARANCE: OMEGA // ACCESS GRANTED
-            </div>
+        <div className="h-[3px] w-full overflow-hidden rounded-full bg-white/[0.08]">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-wv-cyan to-wv-magenta transition-[width] duration-200 ease-out"
+            style={{ width: `${Math.min(pct, 100)}%` }}
+          />
+        </div>
 
-            {phase === "ready" && (
-              <div className="mt-5">
-                <span className="wv-prompt text-wv-cyan glow-cyan font-bold tracking-[0.2em]">
-                  ▶ PRESS ANY KEY TO ENTER
-                </span>
-                <div className="mt-1 text-[9px] tracking-[0.3em] text-wv-muted">
-                  [ KEYBOARD · CLICK · TAP ]
-                </div>
-              </div>
-            )}
-
-            {phase === "entering" && (
-              <div className="mt-5">
-                <span className="wv-entering text-wv-magenta glow-magenta font-bold tracking-[0.2em]">
-                  ▶ ENTERING SYSTEM_
-                </span>
-              </div>
-            )}
-          </>
-        )}
+        <div className="text-[10px] tracking-[0.3em] text-wv-muted">
+          {pct < 100 ? "Loading…" : "Ready"}
+        </div>
       </div>
     </div>
   );

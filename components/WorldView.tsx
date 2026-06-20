@@ -283,7 +283,7 @@ function renderLayer(
   }
 }
 
-export default function WorldView() {
+export default function WorldView({ onReady }: { onReady?: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const dsMapRef = useRef<Map<LayerId, Cesium.CustomDataSource>>(new Map());
@@ -539,6 +539,7 @@ export default function WorldView() {
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
     setReady(true);
+    onReady?.(); // tell the loading splash the globe is up
 
     // dev-only handle for debugging/verification (stripped from prod bundles)
     if (process.env.NODE_ENV !== "production") {

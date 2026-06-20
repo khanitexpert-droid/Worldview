@@ -3,7 +3,6 @@
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import BootSequence from "@/components/BootSequence";
-import CrtPowerOn from "@/components/CrtPowerOn";
 
 // Cesium touches window/WebGL — must be client-only.
 const WorldView = dynamic(() => import("@/components/WorldView"), {
@@ -12,20 +11,14 @@ const WorldView = dynamic(() => import("@/components/WorldView"), {
 
 export default function Home() {
   const [booted, setBooted] = useState(false);
-  const [powering, setPowering] = useState(false);
+  const [globeReady, setGlobeReady] = useState(false);
 
   return (
     <main className="h-full w-full">
-      {/* mount the globe behind the boot screen so it's warm by the time it lifts */}
-      <WorldView />
-      {powering && <CrtPowerOn onDone={() => setPowering(false)} />}
+      {/* mount the globe behind the splash so it's warm by the time it lifts */}
+      <WorldView onReady={() => setGlobeReady(true)} />
       {!booted && (
-        <BootSequence
-          onDone={() => {
-            setBooted(true);
-            setPowering(true);
-          }}
-        />
+        <BootSequence ready={globeReady} onDone={() => setBooted(true)} />
       )}
     </main>
   );
