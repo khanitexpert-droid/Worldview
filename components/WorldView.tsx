@@ -373,17 +373,72 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
 
     const scene = viewer.scene;
     scene.backgroundColor = Cesium.Color.fromCssColorString("#05030a");
-    scene.globe.baseColor = Cesium.Color.fromCssColorString("#0b0612");
+    // Deep ocean-blue (not violet) for the split-second before tiles stream in,
+    // so the globe reads as a real planet from the very first frame.
+    scene.globe.baseColor = Cesium.Color.fromCssColorString("#02060f");
+    // Full-bright, no day/night terminator — show the whole Earth like the NASA
+    // "Blue Marble" reference instead of leaving half the globe in shadow.
     scene.globe.enableLighting = false;
-    // push the atmosphere toward magenta/violet
+    // REAL-EARTH LOOK: a soft natural atmospheric limb (no hue/saturation shift)
+    // around the NASA Blue Marble texture set just below. The old magenta-ward
+    // ground-atmosphere shift was dyeing the whole globe green/yellow.
+    scene.globe.showGroundAtmosphere = true;
+    scene.globe.atmosphereHueShift = 0.0;
+    scene.globe.atmosphereSaturationShift = 0.0;
+    scene.globe.atmosphereBrightnessShift = 0.0;
     if (scene.skyAtmosphere) {
-      scene.skyAtmosphere.hueShift = 0.58;
-      scene.skyAtmosphere.saturationShift = 0.35;
-      scene.skyAtmosphere.brightnessShift = -0.05;
+      // natural blue atmospheric glow on the limb (was shifted to magenta)
+      scene.skyAtmosphere.hueShift = 0.0;
+      scene.skyAtmosphere.saturationShift = 0.0;
+      scene.skyAtmosphere.brightnessShift = 0.0;
     }
-    scene.globe.atmosphereHueShift = 0.58;
-    scene.globe.atmosphereSaturationShift = 0.25;
     scene.fog.enabled = true;
+
+    // ---- realistic Earth that STAYS SHARP when you zoom in ----
+    // Base layer = Cesium World Imagery (Bing satellite, streamed in high-res
+    // tiles) so the ground stays crisp at any zoom. The NASA Blue Marble + cloud
+    // textures sit ON TOP and give the gorgeous from-orbit look — but they're
+    // single low-res tiles, so we FADE them out as the camera drops toward the
+    // surface, revealing the sharp satellite imagery underneath. Best of both:
+    // Blue Marble from space, real satellite detail up close. (Textures are
+    // bundled equirectangular JPEGs in /public/textures; the cloud one is white
+    // cloud on black, so colorToAlpha drops the black and keeps only the cloud.)
+    let blueMarbleLayer: Cesium.ImageryLayer | null = null;
+    let cloudLayer: Cesium.ImageryLayer | null = null;
+    Cesium.SingleTileImageryProvider.fromUrl("/textures/earth_daymap.jpg", {
+      tileWidth: 5400,
+      tileHeight: 2700,
+    })
+      .then((dayProvider) => {
+        if (viewer.isDestroyed()) return undefined;
+        blueMarbleLayer = viewer.imageryLayers.addImageryProvider(dayProvider);
+        return Cesium.SingleTileImageryProvider.fromUrl(
+          "/textures/earth_clouds.jpg",
+          { tileWidth: 2048, tileHeight: 1024 }
+        );
+      })
+      .then((cloudProvider) => {
+        if (!cloudProvider || viewer.isDestroyed()) return;
+        cloudLayer = viewer.imageryLayers.addImageryProvider(cloudProvider);
+        cloudLayer.colorToAlpha = Cesium.Color.BLACK; // black sky → transparent
+        cloudLayer.colorToAlphaThreshold = 0.18; // keep only the bright cloud
+      })
+      .catch((err) =>
+        console.error("[worldview] blue-marble imagery failed", err)
+      );
+
+    // Crossfade Blue Marble → satellite by camera altitude (metres above ground).
+    const BM_FAR = 2.5e6; // ≥ ~2,500 km up: full Blue Marble overlay
+    const BM_NEAR = 4.0e5; // ≤ ~400 km up: overlay hidden, sharp satellite shows
+    const blendBasemap = () => {
+      if (!blueMarbleLayer) return;
+      const h = scene.camera.positionCartographic?.height ?? BM_FAR;
+      let t = (h - BM_NEAR) / (BM_FAR - BM_NEAR);
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      blueMarbleLayer.alpha = t;
+      if (cloudLayer) cloudLayer.alpha = 0.78 * t;
+    };
+    scene.preRender.addEventListener(blendBasemap);
 
     viewer.camera.setView({
       destination: Cesium.Cartesian3.fromDegrees(10, 25, 22_000_000),

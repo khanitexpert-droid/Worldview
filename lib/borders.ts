@@ -1,11 +1,13 @@
 import * as Cesium from "cesium";
 
-// Dark, prominent border colour that reads against the bright imagery.
-const BORDER = Cesium.Color.fromCssColorString("#0a0a12").withAlpha(0.92);
+// Thin, muted off-white border lines — bright enough to read over the dark
+// oceans and bright land of the NASA Blue Marble, but dimmed well below pure
+// white so they stay subtle and the globe still reads as a real planet.
+const BORDER = Cesium.Color.fromCssColorString("#aab0bd").withAlpha(0.5);
 // Lift the lines a hair off the ellipsoid so they don't z-fight the surface.
 // 2 km is sub-pixel at globe scale (the globe has no 3D terrain).
 const RAISE = 2000;
-const WIDTH = 1.8;
+const WIDTH = 1.0;
 
 /**
  * World country borders. Parses the bundled Natural Earth 50m countries GeoJSON

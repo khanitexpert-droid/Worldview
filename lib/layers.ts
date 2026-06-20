@@ -21,7 +21,7 @@ export const LAYERS: LayerMeta[] = [
     color: "#ff2d95",
     source: "ADS-B NETWORK",
     info: "At any given moment roughly 8,000–20,000 aircraft are airborne worldwide — and more than 100,000 flights take off every single day.",
-    defaultOn: true,
+    defaultOn: false,
   },
   {
     id: "ships",
@@ -31,7 +31,7 @@ export const LAYERS: LayerMeta[] = [
     color: "#00e5ff",
     source: "AIS RELAY (SIM)",
     info: "Over 50,000 large merchant ships are at sea right now, carrying around 90% of everything the world trades.",
-    defaultOn: true,
+    defaultOn: false,
   },
   {
     id: "satellites",
@@ -41,7 +41,7 @@ export const LAYERS: LayerMeta[] = [
     color: "#b14bff",
     source: "CELESTRAK · LEO+GEO",
     info: "LEO · Low Earth Orbit (under 2,000 km): the crowded zone where Starlink, the ISS and imaging sats lap the planet about every 90 minutes. GEO · Geostationary (~35,786 km): parked over the equator at Earth's spin speed, so each one hovers above a single spot — TV, weather and comms.",
-    defaultOn: true,
+    defaultOn: false,
   },
   {
     id: "earthquakes",
@@ -51,7 +51,7 @@ export const LAYERS: LayerMeta[] = [
     color: "#ffb347",
     source: "USGS FEED",
     info: "About 500,000 earthquakes are detected around the world each year — roughly 100,000 are felt, and around 100 cause damage.",
-    defaultOn: true,
+    defaultOn: false,
   },
   {
     id: "events",
@@ -61,7 +61,7 @@ export const LAYERS: LayerMeta[] = [
     color: "#ffe14d",
     source: "GDELT · GLOBAL NEWS",
     info: "GDELT scans the world's news in 100+ languages and refreshes every 15 minutes. This layer clusters the day's conflict, unrest and disaster coverage by the country of the reporting outlets — the brighter the node, the more the world is reporting from there right now. Click a node for the latest headlines.",
-    defaultOn: true,
+    defaultOn: false,
   },
   {
     id: "cctv",
