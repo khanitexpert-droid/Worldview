@@ -26,6 +26,7 @@ import type {
 import { SatelliteField } from "@/lib/satField";
 import { EventFx } from "@/lib/eventFx";
 import { MapLabels } from "@/lib/mapLabels";
+import { loadBorders } from "@/lib/borders";
 
 import TopBar from "./hud/TopBar";
 import Controls from "./hud/Controls";
@@ -312,6 +313,8 @@ export default function WorldView() {
   const eventFxRef = useRef<EventFx | null>(null);
   // ---- place-name labels (countries / cities / oceans) ----
   const mapLabelsRef = useRef<MapLabels | null>(null);
+  // ---- world country borders (GeoJSON) ----
+  const bordersDsRef = useRef<Cesium.CustomDataSource | null>(null);
 
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Record<LayerId, unknown[]>>({
@@ -409,6 +412,11 @@ export default function WorldView() {
 
     // place-name labels — countries, cities (on zoom-in), oceans
     mapLabelsRef.current = new MapLabels(viewer);
+
+    // world country borders (async GeoJSON load)
+    loadBorders(viewer).then((ds) => {
+      bordersDsRef.current = ds;
+    });
 
     // ---- per-frame: dead-reckon the truth target, ease the display to it ----
     lastTickRef.current = performance.now();
@@ -548,6 +556,7 @@ export default function WorldView() {
       eventFxRef.current = null;
       mapLabelsRef.current?.destroy();
       mapLabelsRef.current = null;
+      bordersDsRef.current = null;
       viewer.destroy();
       viewerRef.current = null;
     };
