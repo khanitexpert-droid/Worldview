@@ -336,6 +336,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
         animation: false,
         timeline: false,
         baseLayerPicker: false,
+        // no default Ion/Bing base — we set our own imagery below (and Bing via
+        // Ion was returning opaque BLACK tiles when throttled = the black-hole bug)
+        baseLayer: false,
         geocoder: false,
         homeButton: false,
         sceneModePicker: false,
@@ -381,22 +384,28 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
 
     // ---- realistic Earth that STAYS SHARP when you zoom in ----
     // CLEAN, NEVER-BLACK BASEMAP:
-    // - The NASA Blue Marble (single bundled texture) is the BOTTOM layer and
-    //   stays FULLY OPAQUE at all times, so the globe is always covered — no
-    //   black holes, even while satellite tiles are loading or if they fail.
-    // - Cesium World Imagery (Bing satellite) sits ABOVE it and FADES IN as the
-    //   camera drops toward the surface, giving sharp streamed tiles up close;
-    //   wherever those tiles lag or fail, the Blue Marble shows through (blurry
-    //   at worst) instead of going black.
+    // - NASA Blue Marble (single bundled texture) is the BOTTOM layer, FULLY
+    //   OPAQUE at all times, so the globe is always covered — no black holes.
+    // - Esri World Imagery (free tiled satellite, no token) sits ABOVE it and
+    //   FADES IN as the camera drops toward the surface, for sharp real ground
+    //   detail up close. Esri returns TRANSPARENT for any missing tile, so gaps
+    //   reveal the Blue Marble — unlike Bing-via-Ion, which rendered opaque BLACK
+    //   tiles when throttled and produced the black-hole globe.
     // - The cloud sheet sits on top and fades out as you zoom in.
-    const bingLayer = viewer.imageryLayers.get(0); // default Cesium World Imagery
     let blueMarbleLayer: Cesium.ImageryLayer | null = null;
+    let satLayer: Cesium.ImageryLayer | null = null;
     let cloudLayer: Cesium.ImageryLayer | null = null;
     Cesium.SingleTileImageryProvider.fromUrl("/textures/earth_daymap.jpg")
       .then((dayProvider) => {
         if (viewer.isDestroyed()) return undefined;
         blueMarbleLayer = viewer.imageryLayers.addImageryProvider(dayProvider);
-        viewer.imageryLayers.lowerToBottom(blueMarbleLayer); // reliable opaque base
+        satLayer = viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            maximumLevel: 19,
+            credit: "Imagery © Esri, Maxar, Earthstar Geographics",
+          })
+        );
         return Cesium.SingleTileImageryProvider.fromUrl(
           "/textures/earth_clouds.jpg"
         );
@@ -407,9 +416,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
         cloudLayer.colorToAlpha = Cesium.Color.BLACK; // black sky → transparent
         cloudLayer.colorToAlphaThreshold = 0.18; // keep only the bright cloud
       })
-      .catch((err) =>
-        console.error("[worldview] blue-marble imagery failed", err)
-      );
+      .catch((err) => console.error("[worldview] imagery failed", err));
 
     // Blend by camera altitude (metres). t = 1 far (orbit) → 0 near (surface).
     const BM_FAR = 2.5e6; // ≥ ~2,500 km up: pure Blue Marble look
@@ -418,7 +425,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       const h = scene.camera.positionCartographic?.height ?? BM_FAR;
       let t = (h - BM_NEAR) / (BM_FAR - BM_NEAR);
       t = t < 0 ? 0 : t > 1 ? 1 : t;
-      if (bingLayer) bingLayer.alpha = 1 - t; // satellite fades IN as you zoom in
+      if (satLayer) satLayer.alpha = 1 - t; // satellite fades IN as you zoom in
       if (blueMarbleLayer) blueMarbleLayer.alpha = 1; // base stays fully opaque
       if (cloudLayer) cloudLayer.alpha = 0.78 * t; // clouds fade out as you zoom in
     };
