@@ -130,23 +130,6 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
           ["TIME", new Date(e.time).toISOString().slice(11, 19) + "Z"],
         ],
       };
-    case "cctv":
-      return {
-        title: e.name,
-        rows: [
-          ["TYPE", "CCTV CAMERA"],
-          ["STATUS", e.status],
-          ["ID", e.id],
-        ],
-      };
-    case "traffic":
-      return {
-        title: e.road,
-        rows: [
-          ["TYPE", "ROAD SENSOR"],
-          ["CONGESTION", e.level],
-        ],
-      };
     case "events":
       return {
         title: e.name,
@@ -218,20 +201,6 @@ export default function EntityBody({
 
         {/* world-event headlines (real, clickable news links) */}
         {selected.kind === "events" && <EventHeadlines event={selected} />}
-
-        {/* CCTV mock viewport */}
-        {selected.kind === "cctv" && (
-          <div className="mb-2 flex h-28 items-center justify-center border border-wv-border bg-black/60 text-[10px] tracking-widest text-wv-muted">
-            {selected.status === "ONLINE" ? (
-              <span className="flex items-center gap-2 text-wv-cyan">
-                <span className="wv-live-dot h-1.5 w-1.5 rounded-full bg-wv-red" />
-                ● LIVE FEED // SIM
-              </span>
-            ) : (
-              <span className="text-wv-red">CAMERA OFFLINE OR UNREACHABLE</span>
-            )}
-          </div>
-        )}
 
         <div className="text-[10px]">
           {rows.map(([k, v]) => (

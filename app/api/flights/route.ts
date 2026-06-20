@@ -14,7 +14,7 @@ const KN_TO_MS = 0.514444;
 // is queried at most ~once every 30s no matter how often clients poll. The
 // client interpolates between snapshots, so motion stays smooth despite the
 // caching. On a total upstream failure we serve the last snapshot up to
-// STALE_TTL old before falling back to a coherent synthetic feed.
+// STALE_TTL old, then an EMPTY list — real data only, never simulated planes.
 let cache: { items: Flight[]; ts: number; source: string } | null = null;
 const FRESH_TTL = 30_000;
 const STALE_TTL = 10 * 60_000;
@@ -196,43 +196,9 @@ export async function GET() {
     console.error("[flights] OpenSky failed:", e);
   }
 
-  // serve a recent snapshot if we have one, else coherent synthetic
+  // serve a recent snapshot if we have one, else nothing (never simulated)
   if (cache && now - cache.ts < STALE_TTL) {
     return Response.json({ items: cache.items, source: `${cache.source}-cached`, live: true });
   }
-  return Response.json({ items: syntheticFlights(), source: "fallback", live: false });
-}
-
-// Deterministic, time-based synthetic feed — identical across requests and
-// continuous, so it glides instead of teleporting.
-function syntheticFlights(): Flight[] {
-  const t = Date.now() / 1000;
-  const rand = (i: number, n: number) => {
-    const x = Math.sin(i * 12.9898 + n * 78.233) * 43758.5453;
-    return x - Math.floor(x);
-  };
-  const out: Flight[] = [];
-  for (let i = 0; i < 240; i++) {
-    const lat = -55 + rand(i, 1) * 110;
-    const lon0 = -180 + rand(i, 2) * 360;
-    const speed = 180 + rand(i, 3) * 120;
-    const dir = rand(i, 4) < 0.5 ? 1 : -1;
-    const cosLat = Math.cos((lat * Math.PI) / 180) || 1e-6;
-    let lon = lon0 + (dir * speed * t) / (111_320 * cosLat);
-    lon = ((((lon + 180) % 360) + 360) % 360) - 180;
-    out.push({
-      id: `SIM${i}`,
-      callsign: `WV${100 + i}`,
-      country: "SIMULATED",
-      lon,
-      lat,
-      altitude: 8000 + rand(i, 5) * 4000,
-      velocity: speed,
-      heading: dir > 0 ? 90 : 270,
-      verticalRate: 0,
-      onGround: false,
-      timePosition: Date.now(),
-    });
-  }
-  return out;
+  return Response.json({ items: [], source: "unavailable", live: false });
 }

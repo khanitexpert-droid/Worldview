@@ -63,26 +63,6 @@ export const LAYERS: LayerMeta[] = [
     info: "GDELT scans the world's news in 100+ languages and refreshes every 15 minutes. This layer clusters the day's conflict, unrest and disaster coverage by the country of the reporting outlets — the brighter the node, the more the world is reporting from there right now. Click a node for the latest headlines.",
     defaultOn: false,
   },
-  {
-    id: "cctv",
-    label: "CCTV FEEDS",
-    short: "CCTV",
-    icon: "▣",
-    color: "#ff414e",
-    source: "PUBLIC CAMS (SIM)",
-    info: "An estimated 1 billion surveillance cameras watch the world — about one camera for every 8 people alive.",
-    defaultOn: false,
-  },
-  {
-    id: "traffic",
-    label: "STREET TRAFFIC",
-    short: "TRFC",
-    icon: "▤",
-    color: "#5dff9e",
-    source: "ROAD SENSORS (SIM)",
-    info: "Earth's roads stretch about 64 million km end to end — enough to wrap around the planet more than 1,600 times.",
-    defaultOn: false,
-  },
 ];
 
 export const LAYER_BY_ID: Record<LayerId, LayerMeta> = Object.fromEntries(

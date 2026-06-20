@@ -8,13 +8,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorldView } from "@/lib/store";
 import { LAYERS } from "@/lib/layers";
 import {
-  fetchCctv,
   fetchEarthquakes,
   fetchEvents,
   fetchFlights,
   fetchShips,
   fetchSatellites,
-  fetchTraffic,
 } from "@/lib/feeds";
 import type {
   Flight,
@@ -80,8 +78,6 @@ const POLL_MS: Record<PollLayerId, number> = {
   // dead-reckons between snapshots, so polling often just re-fetches the cache.
   ships: 60000,
   earthquakes: 60000,
-  cctv: 60000,
-  traffic: 15000,
   // GDELT only refreshes upstream every ~15 min; poll at 3 min to catch each
   // new slice promptly. The client fetch is multi-query (~16s) so this is well
   // clear of overlapping itself.
@@ -95,8 +91,6 @@ const FETCHERS: Record<
   flights: fetchFlights,
   ships: fetchShips,
   earthquakes: fetchEarthquakes,
-  cctv: fetchCctv,
-  traffic: fetchTraffic,
   events: fetchEvents,
 };
 
@@ -111,19 +105,6 @@ function quakeColor(mag: number): Cesium.Color {
   if (mag >= 4.5) return Cesium.Color.fromCssColorString("#ff7a3c");
   if (mag >= 3) return C.amber;
   return C.cyan;
-}
-
-function trafficColor(level: string): Cesium.Color {
-  switch (level) {
-    case "JAM":
-      return C.red;
-    case "HEAVY":
-      return Cesium.Color.fromCssColorString("#ff7a3c");
-    case "MODERATE":
-      return C.amber;
-    default:
-      return C.green;
-  }
 }
 
 // tint per AIS vessel category (white glyph × this color)
@@ -213,25 +194,6 @@ function renderLayer(
     return;
   }
 
-  if (id === "cctv") {
-    for (const c of items as import("@/lib/types").Camera[]) {
-      const eid = `cctv:${c.id}`;
-      const online = c.status === "ONLINE";
-      ds.entities.add({
-        id: eid,
-        position: Cesium.Cartesian3.fromDegrees(c.lon, c.lat, 0),
-        point: {
-          pixelSize: 7,
-          color: (online ? C.red : C.muted).withAlpha(0.9),
-          outlineColor: online ? C.amber : C.muted,
-          outlineWidth: 1,
-        },
-      });
-      sel.set(eid, { kind: "cctv", ...c });
-    }
-    return;
-  }
-
   if (id === "events") {
     let idx = 0;
     for (const ev of items as WorldEvent[]) {
@@ -265,22 +227,6 @@ function renderLayer(
     return;
   }
 
-  if (id === "traffic") {
-    for (const r of items as import("@/lib/types").RoadTraffic[]) {
-      const eid = `traffic:${r.id}`;
-      ds.entities.add({
-        id: eid,
-        position: Cesium.Cartesian3.fromDegrees(r.lon, r.lat, 0),
-        point: {
-          pixelSize: 5,
-          color: trafficColor(r.level),
-          outlineColor: Cesium.Color.BLACK.withAlpha(0.4),
-          outlineWidth: 1,
-        },
-      });
-      sel.set(eid, { kind: "traffic", ...r });
-    }
-  }
 }
 
 export default function WorldView({ onReady }: { onReady?: () => void }) {
@@ -303,9 +249,6 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const satLoadedRef = useRef(false);
   const satRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTickRef = useRef(0);
-  // once we've seen a real feed, ignore synthetic-fallback polls so the map
-  // doesn't flip-flop between thousands of real planes and 240 placeholders.
-  const haveRealFlightsRef = useRef(false);
   // ---- world-events headline ticker (streams new headlines into intel) ----
   const seenEventUrlsRef = useRef<Set<string>>(new Set());
   const eventsPrimedRef = useRef(false);
@@ -322,8 +265,6 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     ships: [],
     satellites: [],
     earthquakes: [],
-    cctv: [],
-    traffic: [],
     events: [],
   });
 
@@ -631,15 +572,6 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
         try {
           const res = await FETCHERS[id]();
           const items = res.items;
-          // flights: once we have a real feed, drop synthetic-fallback polls
-          // so thousands of real planes don't get replaced by 240 placeholders.
-          if (id === "flights") {
-            const isReal = res.source
-              ? res.source.startsWith("opensky")
-              : true;
-            if (!isReal && haveRealFlightsRef.current) return;
-            if (isReal) haveRealFlightsRef.current = true;
-          }
           setData((d) => ({ ...d, [id]: items }));
           setCount(id, items.length);
           if (!loadedRef.current.has(id)) {

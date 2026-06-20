@@ -10,8 +10,9 @@ export const maxDuration = 20;
 // capped at 50 vessels and a 4° total span, so we sweep ~15 boxes over the
 // world's busiest ports / chokepoints and merge them. Cached so upstream is hit
 // at most ~once per FRESH_TTL no matter how many clients poll; the client
-// interpolates between snapshots. Falls back to a synthetic feed if the key is
-// missing or the API fails.
+// interpolates between snapshots. Real data only — if the key is missing or the
+// API fails (and no recent cache), we return an EMPTY list rather than any
+// simulated vessels.
 // ============================================================================
 
 const BASE = "https://api.vesselapi.com/v1/location/vessels/bounding-box";
@@ -161,7 +162,7 @@ export async function GET() {
 
   const apiKey = process.env.VESSELAPI_API_KEY;
   if (!apiKey) {
-    return Response.json({ items: syntheticShips(), source: "sim-ais", live: false });
+    return Response.json({ items: [], source: "no-key", live: false });
   }
 
   try {
@@ -180,41 +181,5 @@ export async function GET() {
   if (cache && now - cache.ts < STALE_TTL) {
     return Response.json({ items: cache.items, source: `${cache.source}-cached`, live: true });
   }
-  return Response.json({ items: syntheticShips(), source: "sim-ais", live: false });
-}
-
-// ---- coherent synthetic fallback (used only if the key/API is unavailable) ----
-const LANES: [number, number, string][] = [
-  [4.0, 51.9, "ROTTERDAM"],
-  [121.8, 31.2, "SHANGHAI"],
-  [-118.25, 33.72, "SAN PEDRO"],
-  [55.05, 25.0, "JEBEL ALI"],
-  [103.7, 1.26, "SINGAPORE"],
-  [32.35, 31.25, "SUEZ"],
-  [-79.9, 9.35, "PANAMA"],
-];
-const TYPES = ["CARGO", "TANKER", "CONTAINER", "BULK CARRIER", "RO-RO", "LNG"];
-
-function syntheticShips(): Ship[] {
-  const t = Date.now() / 1000;
-  const items: Ship[] = [];
-  let n = 0;
-  for (const [lon, lat, area] of LANES) {
-    for (let i = 0; i < 14; i++) {
-      const phase = (n * 1.7 + t / 90) % (Math.PI * 2);
-      const spread = ((i % 7) - 3) * 0.35;
-      items.push({
-        id: `MMSI${200000000 + n}`,
-        name: `${area} ${n}`,
-        lon: lon + Math.cos(phase) * 0.6 + spread,
-        lat: lat + Math.sin(phase) * 0.45 + spread * 0.4,
-        heading: (Math.cos(phase) * 180 + 180) % 360,
-        type: TYPES[(n + i) % TYPES.length],
-        speed: 6 + ((n * 7 + i * 3) % 16),
-        timePosition: Date.now(),
-      });
-      n++;
-    }
-  }
-  return items;
+  return Response.json({ items: [], source: "unavailable", live: false });
 }

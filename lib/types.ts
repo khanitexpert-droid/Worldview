@@ -5,8 +5,6 @@ export type LayerId =
   | "satellites"
   | "earthquakes"
   | "ships"
-  | "cctv"
-  | "traffic"
   | "events";
 
 export interface Flight {
@@ -84,22 +82,6 @@ export interface Ship {
   eta?: string; // formatted estimated time of arrival
 }
 
-export interface Camera {
-  id: string;
-  name: string;
-  lon: number;
-  lat: number;
-  status: "ONLINE" | "OFFLINE";
-}
-
-export interface RoadTraffic {
-  id: string;
-  lon: number;
-  lat: number;
-  level: "FREE" | "MODERATE" | "HEAVY" | "JAM";
-  road: string;
-}
-
 /** One news article in a world-event cluster (parsed from the GDELT DOC feed). */
 export interface EventHeadline {
   title: string;
@@ -129,6 +111,4 @@ export type FeedEntity =
   | ({ kind: "satellites" } & Satellite)
   | ({ kind: "earthquakes" } & Earthquake)
   | ({ kind: "ships" } & Ship)
-  | ({ kind: "cctv" } & Camera)
-  | ({ kind: "traffic" } & RoadTraffic)
   | ({ kind: "events" } & WorldEvent);

@@ -1,8 +1,6 @@
 import type {
-  Camera,
   Earthquake,
   Flight,
-  RoadTraffic,
   Ship,
   SatelliteTle,
   WorldEvent,
@@ -29,9 +27,6 @@ export const fetchSatellites = () =>
   getJSON<SatellitesResponse>("/api/satellites");
 export const fetchEarthquakes = () =>
   getJSON<{ items: Earthquake[] }>("/api/earthquakes");
-export const fetchCctv = () => getJSON<{ items: Camera[] }>("/api/cctv");
-export const fetchTraffic = () =>
-  getJSON<{ items: RoadTraffic[] }>("/api/traffic");
 // Read the events the scheduled GitHub Action publishes (relayed same-origin by
 // /api/events). We do NOT fetch GDELT from the browser — its CORS on the JSON
 // endpoint is unreliable and per-IP rate limits bite visitors.
