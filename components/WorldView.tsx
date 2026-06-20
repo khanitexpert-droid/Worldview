@@ -919,7 +919,10 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
         viewer.dataSources.add(ds);
         dsMapRef.current.set(id, ds);
       }
-      ds.show = layers[id];
+      // `layers[id]` is undefined for any layer that's been removed from the
+      // registry but is still wired into FETCHERS (e.g. the dormant "bases").
+      // Cesium's `show` setter rejects undefined ("value is required"), so coerce.
+      ds.show = !!layers[id];
       if (layers[id]) {
         renderLayer(ds, id, data[id], selMapRef.current);
       } else {
