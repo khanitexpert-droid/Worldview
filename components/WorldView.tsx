@@ -405,16 +405,13 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     // cloud on black, so colorToAlpha drops the black and keeps only the cloud.)
     let blueMarbleLayer: Cesium.ImageryLayer | null = null;
     let cloudLayer: Cesium.ImageryLayer | null = null;
-    Cesium.SingleTileImageryProvider.fromUrl("/textures/earth_daymap.jpg", {
-      tileWidth: 5400,
-      tileHeight: 2700,
-    })
+    // (fromUrl reads each image's dimensions itself — no tileWidth/Height opts)
+    Cesium.SingleTileImageryProvider.fromUrl("/textures/earth_daymap.jpg")
       .then((dayProvider) => {
         if (viewer.isDestroyed()) return undefined;
         blueMarbleLayer = viewer.imageryLayers.addImageryProvider(dayProvider);
         return Cesium.SingleTileImageryProvider.fromUrl(
-          "/textures/earth_clouds.jpg",
-          { tileWidth: 2048, tileHeight: 1024 }
+          "/textures/earth_clouds.jpg"
         );
       })
       .then((cloudProvider) => {
