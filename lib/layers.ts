@@ -53,16 +53,20 @@ export const LAYERS: LayerMeta[] = [
     info: "About 500,000 earthquakes are detected around the world each year — roughly 100,000 are felt, and around 100 cause damage.",
     defaultOn: false,
   },
-  {
-    id: "bases",
-    label: "MILITARY BASES",
-    short: "BASE",
-    icon: "★",
-    color: "#ff5a4d",
-    source: "OPENSTREETMAP",
-    info: "Named military installations — army, naval and air bases — across the Middle East and Asia (the Gulf, Levant, Iraq/Iran, Central & South Asia and East Asia), including the foreign bases hosted there (e.g. Al Udeid, Al Dhafra, NSA Bahrain). Mapped by the OpenStreetMap community; coverage reflects what's been publicly mapped — not an exhaustive order of battle.",
-    defaultOn: false,
-  },
+  // MILITARY BASES — temporarily disabled. The 2,685 star-billboard markers
+  // rendered as opaque black squares that clumped into a black blob over Asia.
+  // Re-enable once the renderer is fixed (use `point` graphics instead of the
+  // SVG billboard image). Data + fetcher + renderer remain in place, dormant.
+  // {
+  //   id: "bases",
+  //   label: "MILITARY BASES",
+  //   short: "BASE",
+  //   icon: "★",
+  //   color: "#ff5a4d",
+  //   source: "OPENSTREETMAP",
+  //   info: "Named military installations across the Middle East and Asia, from OpenStreetMap.",
+  //   defaultOn: false,
+  // },
   {
     id: "events",
     label: "WORLD EVENTS",
