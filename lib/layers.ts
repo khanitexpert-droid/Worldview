@@ -54,6 +54,16 @@ export const LAYERS: LayerMeta[] = [
     defaultOn: false,
   },
   {
+    id: "bases",
+    label: "MILITARY BASES",
+    short: "BASE",
+    icon: "★",
+    color: "#ff5a4d",
+    source: "OPENSTREETMAP",
+    info: "Named military installations — army, naval and air bases — across the Middle East and Asia (the Gulf, Levant, Iraq/Iran, Central & South Asia and East Asia), including the foreign bases hosted there (e.g. Al Udeid, Al Dhafra, NSA Bahrain). Mapped by the OpenStreetMap community; coverage reflects what's been publicly mapped — not an exhaustive order of battle.",
+    defaultOn: false,
+  },
+  {
     id: "events",
     label: "WORLD EVENTS",
     short: "INTL",

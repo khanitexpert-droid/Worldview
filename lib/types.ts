@@ -5,6 +5,7 @@ export type LayerId =
   | "satellites"
   | "earthquakes"
   | "ships"
+  | "bases"
   | "events";
 
 export interface Flight {
@@ -106,9 +107,21 @@ export interface WorldEvent {
   headlines: EventHeadline[]; // top headlines, most recent first
 }
 
+/** A military installation (real, sourced from OpenStreetMap `military=*`). */
+export interface MilitaryBase {
+  id: string;
+  name: string;
+  lon: number;
+  lat: number;
+  branch: "BASE" | "NAVAL" | "AIR"; // ground base / naval base / air base
+  country?: string; // country the base sits in (absent if offshore/disputed)
+  operator?: string; // operating force, when OSM records it
+}
+
 export type FeedEntity =
   | ({ kind: "flights" } & Flight)
   | ({ kind: "satellites" } & Satellite)
   | ({ kind: "earthquakes" } & Earthquake)
   | ({ kind: "ships" } & Ship)
+  | ({ kind: "bases" } & MilitaryBase)
   | ({ kind: "events" } & WorldEvent);

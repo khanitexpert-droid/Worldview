@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorldView } from "@/lib/store";
 import { LAYERS } from "@/lib/layers";
 import {
+  fetchBases,
   fetchEarthquakes,
   fetchEvents,
   fetchFlights,
@@ -68,6 +69,14 @@ const SHIP_DOT_IMAGE = `data:image/svg+xml,${encodeURIComponent(SHIP_DOT_SVG)}`;
 // below this ground speed (m/s ≈ 0.6 kn) a vessel is treated as stationary
 const SHIP_MOVING_MS = 0.3;
 
+// military-base marker: a five-point star (white + dark outline) tinted per
+// branch via the billboard's color.
+const BASE_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
+  "<path d='M12 2.4l2.75 6.05 6.6.62-4.97 4.38 1.5 6.5L12 16.9 6.12 20l1.5-6.5L2.65 9.07l6.6-.62z' " +
+  "fill='#ffffff' stroke='#240a06' stroke-width='1' stroke-linejoin='round'/></svg>";
+const BASE_IMAGE = `data:image/svg+xml,${encodeURIComponent(BASE_SVG)}`;
+
 // satellites are propagated client-side every frame by SatelliteField, so they
 // opt out of the generic poll/render pipeline entirely.
 type PollLayerId = Exclude<LayerId, "satellites">;
@@ -78,6 +87,8 @@ const POLL_MS: Record<PollLayerId, number> = {
   // dead-reckons between snapshots, so polling often just re-fetches the cache.
   ships: 60000,
   earthquakes: 60000,
+  // bases are a bundled static snapshot (don't move) — effectively load-once.
+  bases: 86_400_000,
   // GDELT only refreshes upstream every ~15 min; poll at 3 min to catch each
   // new slice promptly. The client fetch is multi-query (~16s) so this is well
   // clear of overlapping itself.
@@ -91,6 +102,7 @@ const FETCHERS: Record<
   flights: fetchFlights,
   ships: fetchShips,
   earthquakes: fetchEarthquakes,
+  bases: fetchBases,
   events: fetchEvents,
 };
 
@@ -105,6 +117,18 @@ function quakeColor(mag: number): Cesium.Color {
   if (mag >= 4.5) return Cesium.Color.fromCssColorString("#ff7a3c");
   if (mag >= 3) return C.amber;
   return C.cyan;
+}
+
+// military-base star tint by branch (naval / air / ground)
+function baseColor(kind: string): Cesium.Color {
+  switch (kind) {
+    case "NAVAL":
+      return C.cyan;
+    case "AIR":
+      return C.violet;
+    default:
+      return Cesium.Color.fromCssColorString("#ff5a4d"); // ground base
+  }
 }
 
 // tint per AIS vessel category (white glyph × this color)
@@ -194,6 +218,25 @@ function renderLayer(
     return;
   }
 
+  if (id === "bases") {
+    for (const b of items as import("@/lib/types").MilitaryBase[]) {
+      const eid = `bases:${b.id}`;
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(b.lon, b.lat, 0),
+        billboard: {
+          image: BASE_IMAGE,
+          color: baseColor(b.branch),
+          scale: 0.6,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 0.85, 2.6e7, 0.4),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      sel.set(eid, { kind: "bases", ...b });
+    }
+    return;
+  }
+
   if (id === "events") {
     let idx = 0;
     for (const ev of items as WorldEvent[]) {
@@ -265,6 +308,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     ships: [],
     satellites: [],
     earthquakes: [],
+    bases: [],
     events: [],
   });
 

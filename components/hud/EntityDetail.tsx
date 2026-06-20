@@ -130,6 +130,19 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
           ["TIME", new Date(e.time).toISOString().slice(11, 19) + "Z"],
         ],
       };
+    case "bases": {
+      const kind =
+        e.branch === "NAVAL"
+          ? "NAVAL BASE"
+          : e.branch === "AIR"
+            ? "AIR BASE"
+            : "MILITARY BASE";
+      const rows: [string, React.ReactNode][] = [["TYPE", kind]];
+      if (e.country) rows.push(["COUNTRY", e.country]);
+      if (e.operator) rows.push(["OPERATOR", e.operator]);
+      rows.push(["SOURCE", "OPENSTREETMAP"]);
+      return { title: e.name, rows };
+    }
     case "events":
       return {
         title: e.name,

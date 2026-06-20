@@ -1,6 +1,7 @@
 import type {
   Earthquake,
   Flight,
+  MilitaryBase,
   Ship,
   SatelliteTle,
   WorldEvent,
@@ -27,6 +28,12 @@ export const fetchSatellites = () =>
   getJSON<SatellitesResponse>("/api/satellites");
 export const fetchEarthquakes = () =>
   getJSON<{ items: Earthquake[] }>("/api/earthquakes");
+// Bundled static snapshot of real OSM military bases (they don't move, so we
+// don't poll an API for them). Wrapped to match the generic feed shape.
+export const fetchBases = async () => ({
+  items: await getJSON<MilitaryBase[]>("/military_bases.json"),
+  source: "OPENSTREETMAP",
+});
 // Read the events the scheduled GitHub Action publishes (relayed same-origin by
 // /api/events). We do NOT fetch GDELT from the browser — its CORS on the JSON
 // endpoint is unreliable and per-IP rate limits bite visitors.
