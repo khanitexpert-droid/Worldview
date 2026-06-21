@@ -950,6 +950,14 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
             tileset.destroy();
             return;
           }
+          // Tilted/oblique city views span all the way to the horizon. Without
+          // this, the tile budget is spent on distant geometry and the NEAR
+          // buildings never refine — so the city flattens the moment you tilt
+          // off straight-down. dynamicScreenSpaceError coarsens faraway tiles so
+          // the foreground resolves to full 3D (the standard street-level fix).
+          tileset.dynamicScreenSpaceError = true;
+          tileset.dynamicScreenSpaceErrorDensity = 2.0e-4;
+          tileset.dynamicScreenSpaceErrorFactor = 24.0;
           scene.primitives.add(tileset);
           tilesetRef.current = tileset;
           pushIntel("PHOTOREAL 3D · GOOGLE TILES ONLINE", "ok");
