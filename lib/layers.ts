@@ -9,6 +9,9 @@ export interface LayerMeta {
   source: string;
   info: string; // hover blurb / fun fact shown in the Data Layers panel
   defaultOn: boolean;
+  // scene-level toggles (e.g. the 3D basemap) aren't data feeds — they have no
+  // contact count, so the panel shows ON/— instead of a number.
+  noCount?: boolean;
 }
 
 // Central registry — the HUD, the boot sequence and the renderers all read this.
@@ -76,6 +79,17 @@ export const LAYERS: LayerMeta[] = [
     source: "GDELT · GLOBAL NEWS",
     info: "GDELT scans the world's news in 100+ languages and refreshes every 15 minutes. This layer clusters the day's conflict, unrest and disaster coverage by the country of the reporting outlets — the brighter the node, the more the world is reporting from there right now. Click a node for the latest headlines.",
     defaultOn: false,
+  },
+  {
+    id: "photoreal",
+    label: "PHOTOREAL 3D",
+    short: "3D",
+    icon: "⬢",
+    color: "#5dff9e",
+    source: "GOOGLE 3D TILES",
+    info: "Google Photorealistic 3D Tiles — a fully textured 3D mesh of the real world (buildings, terrain, bridges), streamed from Google Maps Platform via Cesium ion. Switches the synthwave globe for true Google-Earth-style detail: zoom into any city and tilt to fly between the buildings. Streaming is metered against your ion quota.",
+    defaultOn: false,
+    noCount: true,
   },
 ];
 

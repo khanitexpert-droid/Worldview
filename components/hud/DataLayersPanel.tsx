@@ -81,7 +81,7 @@ export default function LayersBody() {
               className="text-[10px] tabular-nums"
               style={{ color: on ? l.color : "var(--wv-muted)" }}
             >
-              {on ? counts[l.id] ?? 0 : "—"}
+              {l.noCount ? (on ? "ON" : "—") : on ? counts[l.id] ?? 0 : "—"}
             </span>
           </button>
         );

@@ -6,7 +6,8 @@ export type LayerId =
   | "earthquakes"
   | "ships"
   | "bases"
-  | "events";
+  | "events"
+  | "photoreal";
 
 export interface Flight {
   id: string;

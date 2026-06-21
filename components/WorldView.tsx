@@ -77,9 +77,10 @@ const BASE_SVG =
   "fill='#ffffff' stroke='#240a06' stroke-width='1' stroke-linejoin='round'/></svg>";
 const BASE_IMAGE = `data:image/svg+xml,${encodeURIComponent(BASE_SVG)}`;
 
-// satellites are propagated client-side every frame by SatelliteField, so they
+// satellites are propagated client-side every frame by SatelliteField, and
+// photoreal is a scene-level toggle (Google 3D tiles), not a polled feed — both
 // opt out of the generic poll/render pipeline entirely.
-type PollLayerId = Exclude<LayerId, "satellites">;
+type PollLayerId = Exclude<LayerId, "satellites" | "photoreal">;
 
 const POLL_MS: Record<PollLayerId, number> = {
   flights: 15000,
@@ -301,6 +302,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const mapLabelsRef = useRef<MapLabels | null>(null);
   // ---- world country borders (GeoJSON) ----
   const bordersDsRef = useRef<Cesium.CustomDataSource | null>(null);
+  // ---- Google Photorealistic 3D Tiles (lazy-created scene primitive) ----
+  const tilesetRef = useRef<Cesium.Cesium3DTileset | null>(null);
+  const photorealLoadingRef = useRef(false);
 
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Record<LayerId, unknown[]>>({
@@ -310,9 +314,11 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     earthquakes: [],
     bases: [],
     events: [],
+    photoreal: [], // scene toggle, never carries feed data
   });
 
   const layers = useWorldView((s) => s.layers);
+  const photoreal = useWorldView((s) => s.layers.photoreal);
   const setSelected = useWorldView((s) => s.setSelected);
   const updateSelected = useWorldView((s) => s.updateSelected);
   const setCount = useWorldView((s) => s.setCount);
@@ -604,6 +610,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       mapLabelsRef.current?.destroy();
       mapLabelsRef.current = null;
       bordersDsRef.current = null;
+      // viewer.destroy() disposes its primitives (incl. the tileset); just drop refs
+      tilesetRef.current = null;
+      photorealLoadingRef.current = false;
       viewer.destroy();
       viewerRef.current = null;
     };
@@ -899,6 +908,68 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       (satOrbits.LEO ? satCounts.LEO : 0) + (satOrbits.GEO ? satCounts.GEO : 0);
     setCount("satellites", layers.satellites ? visible : 0);
   }, [ready, layers.satellites, satOrbits, satCounts, setCount]);
+
+  // ---- photorealistic 3D tiles (Google, streamed via Cesium ion) ----
+  // A scene-level toggle, not a data feed: when ON we lazily create Google's
+  // Photorealistic 3D Tileset, hide the synthwave globe (its imagery + the
+  // sea-level borders that would clip through buildings) and let the photoreal
+  // mesh be the world; when OFF we hide the tileset and restore the synthwave
+  // globe. The tileset is created once and cached. Uses a direct Google Maps key
+  // if NEXT_PUBLIC_GOOGLE_MAPS_KEY is set, otherwise the ion token configured
+  // above (which needs the "Google Photorealistic 3D Tiles" asset on the account).
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !ready) return;
+    const scene = viewer.scene;
+
+    // push the current on/off state to the globe + an already-loaded tileset
+    const apply = (on: boolean) => {
+      if (tilesetRef.current) tilesetRef.current.show = on;
+      scene.globe.show = !on;
+      if (bordersDsRef.current) bordersDsRef.current.show = !on;
+    };
+
+    if (photoreal && !tilesetRef.current && !photorealLoadingRef.current) {
+      photorealLoadingRef.current = true;
+      const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
+      // onlyUsingWithGoogleGeocoder attests these tiles won't be paired with a
+      // non-Google geocoder (our viewer has geocoder: false) — this silences
+      // Cesium's repeated TOS warning. Inlined so TS keeps the literal `true`.
+      const tilesetPromise = key
+        ? Cesium.createGooglePhotorealistic3DTileset({
+            key,
+            onlyUsingWithGoogleGeocoder: true,
+          })
+        : Cesium.createGooglePhotorealistic3DTileset({
+            onlyUsingWithGoogleGeocoder: true,
+          });
+      tilesetPromise
+        .then((tileset) => {
+          photorealLoadingRef.current = false;
+          if (viewer.isDestroyed()) {
+            tileset.destroy();
+            return;
+          }
+          scene.primitives.add(tileset);
+          tilesetRef.current = tileset;
+          pushIntel("PHOTOREAL 3D · GOOGLE TILES ONLINE", "ok");
+          // honor the live toggle in case it flipped while the tiles loaded
+          apply(useWorldView.getState().layers.photoreal);
+        })
+        .catch((err) => {
+          photorealLoadingRef.current = false;
+          console.error("[worldview] photoreal 3D tiles failed", err);
+          pushIntel(
+            "PHOTOREAL 3D UNAVAILABLE — ADD THE GOOGLE TILES ASSET TO YOUR ION ACCOUNT",
+            "alert"
+          );
+          // flip the toggle back off so the panel matches reality
+          useWorldView.getState().toggleLayer("photoreal");
+        });
+    } else {
+      apply(photoreal);
+    }
+  }, [photoreal, ready, pushIntel]);
 
   // ---- render the snap-on-poll layers when data/layers change ----
   useEffect(() => {
