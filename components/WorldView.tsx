@@ -31,6 +31,7 @@ import TopBar from "./hud/TopBar";
 import Controls from "./hud/Controls";
 import StatusBar from "./hud/StatusBar";
 import RightRail from "./hud/RightRail";
+import SearchBar from "./hud/SearchBar";
 
 // ---- palette ----
 const C = {
@@ -1101,6 +1102,18 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     });
   }, []);
 
+  // fly to a place's bounding box — Cesium picks the altitude that frames it, so
+  // a country fills the view and a city zooms in appropriately (used by search).
+  const flyToRect = useCallback(
+    (west: number, south: number, east: number, north: number) => {
+      viewerRef.current?.camera.flyTo({
+        destination: Cesium.Rectangle.fromDegrees(west, south, east, north),
+        duration: 1.8,
+      });
+    },
+    []
+  );
+
   const resetView = useCallback(() => {
     viewerRef.current?.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(10, 25, 22_000_000),
@@ -1233,6 +1246,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     <div className="relative h-full w-full overflow-hidden">
       <div ref={containerRef} className="absolute inset-0" />
       <TopBar />
+      <SearchBar onFlyTo={flyTo} onFlyToRect={flyToRect} />
       <Controls onReset={resetView} onLocate={locateMe} />
       <StatusBar />
       <RightRail onFlyTo={flyTo} />
