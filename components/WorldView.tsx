@@ -26,6 +26,7 @@ import type {
 import { SatelliteField } from "@/lib/satField";
 import { EventFx } from "@/lib/eventFx";
 import { MapLabels } from "@/lib/mapLabels";
+import { MeasureTool, HighlightTool } from "@/lib/globeTools";
 import { loadBorders } from "@/lib/borders";
 import { ingestFile, applyVectorStyle, formatFromName } from "@/lib/userData";
 
@@ -378,6 +379,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const eventFxRef = useRef<EventFx | null>(null);
   // ---- place-name labels (countries / cities / oceans) ----
   const mapLabelsRef = useRef<MapLabels | null>(null);
+  // ---- on-globe TOOLS (measure / highlight) ----
+  const measureToolRef = useRef<MeasureTool | null>(null);
+  const highlightToolRef = useRef<HighlightTool | null>(null);
   // ---- world country borders (GeoJSON) ----
   const bordersDsRef = useRef<Cesium.CustomDataSource | null>(null);
   // ---- Google Photorealistic 3D Tiles (lazy-created scene primitive) ----
@@ -424,6 +428,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const satCounts = useWorldView((s) => s.satCounts);
   const setSatCounts = useWorldView((s) => s.setSatCounts);
   const setSatMeta = useWorldView((s) => s.setSatMeta);
+  const activeTool = useWorldView((s) => s.activeTool);
+  const measureMode = useWorldView((s) => s.measureMode);
+  const measureUnit = useWorldView((s) => s.measureUnit);
 
   // fly to an imported layer's extent (vector → its data; raster → its rectangle)
   const zoomToUserLayer = useCallback((id: string) => {
@@ -529,6 +536,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
         selectionIndicator: false,
         infoBox: false,
         creditContainer: document.createElement("div"),
+        // keep the drawing buffer so the SCREENSHOT tool can read the canvas
+        // back as a PNG (canvas.toDataURL) at any time.
+        contextOptions: { webgl: { preserveDrawingBuffer: true } },
       });
     } catch (err) {
       console.error("[worldview] cesium init failed", err);
@@ -641,6 +651,12 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     // place-name labels — countries, cities (on zoom-in), oceans
     mapLabelsRef.current = new MapLabels(viewer);
 
+    // on-globe TOOLS: measure (writes its live readout into the store) + highlight
+    measureToolRef.current = new MeasureTool(viewer, (t) =>
+      useWorldView.getState().setMeasureReadout(t)
+    );
+    highlightToolRef.current = new HighlightTool(viewer);
+
     // world country borders (async GeoJSON load)
     loadBorders(viewer).then((ds) => {
       bordersDsRef.current = ds;
@@ -713,6 +729,18 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     // interaction
     const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
     handler.setInputAction((click: { position: Cesium.Cartesian2 }) => {
+      // a TOOL is armed → clicks measure / highlight on the globe instead of
+      // selecting contacts. Read the live state (handler is created once).
+      const tool = useWorldView.getState().activeTool;
+      if (tool === "measure" || tool === "highlight") {
+        const cart = scene.camera.pickEllipsoid(click.position);
+        if (cart) {
+          if (tool === "measure") measureToolRef.current?.add(cart);
+          else highlightToolRef.current?.add(cart);
+        }
+        return;
+      }
+
       const picked = scene.pick(click.position);
       // entities expose an Entity (with .id); point primitives expose the raw
       // string id we attached. Normalize both to a string key.
@@ -764,6 +792,10 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       } else {
         setCursor(null);
       }
+      // live rubber-band while measuring
+      if (useWorldView.getState().activeTool === "measure") {
+        measureToolRef.current?.move(cart ?? null);
+      }
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
     setReady(true);
@@ -774,6 +806,14 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       (window as unknown as { __wvViewer?: Cesium.Viewer }).__wvViewer = viewer;
       (window as unknown as { __wvFx?: EventFx }).__wvFx =
         eventFxRef.current ?? undefined;
+      (
+        window as unknown as {
+          __wvTools?: { measure: MeasureTool | null; highlight: HighlightTool | null };
+        }
+      ).__wvTools = {
+        measure: measureToolRef.current,
+        highlight: highlightToolRef.current,
+      };
     }
 
     return () => {
@@ -785,6 +825,10 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       eventFxRef.current = null;
       mapLabelsRef.current?.destroy();
       mapLabelsRef.current = null;
+      measureToolRef.current?.destroy();
+      measureToolRef.current = null;
+      highlightToolRef.current?.destroy();
+      highlightToolRef.current = null;
       bordersDsRef.current = null;
       // viewer.destroy() disposes its primitives (incl. the tileset); just drop refs
       tilesetRef.current = null;
@@ -795,6 +839,18 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ---- TOOLS: push measure mode/unit to the tool + crosshair cursor when armed ----
+  useEffect(() => {
+    if (ready) measureToolRef.current?.setMode(measureMode);
+  }, [measureMode, ready]);
+  useEffect(() => {
+    if (ready) measureToolRef.current?.setUnit(measureUnit);
+  }, [measureUnit, ready]);
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (v && ready) v.scene.canvas.style.cursor = activeTool ? "crosshair" : "";
+  }, [activeTool, ready]);
 
   // ---- polling: only enabled layers ----
   useEffect(() => {
@@ -1373,6 +1429,27 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     pushIntel("VIEW RESET — GLOBAL", "info");
   }, [pushIntel]);
 
+  // ---- TOOLS actions (wired into the TOOLS panel via RightRail) ----
+  const clearMeasure = useCallback(() => measureToolRef.current?.clear(), []);
+  const clearHighlight = useCallback(
+    () => highlightToolRef.current?.clear(),
+    []
+  );
+  const takeScreenshot = useCallback(() => {
+    const v = viewerRef.current;
+    if (!v) return;
+    v.render(); // ensure the latest frame is in the (preserved) buffer
+    const url = v.scene.canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `worldview-${new Date()
+      .toISOString()
+      .slice(0, 19)
+      .replace(/[:T]/g, "-")}.png`;
+    a.click();
+    pushIntel("SCREENSHOT SAVED · PNG", "ok");
+  }, [pushIntel]);
+
   const locateMe = useCallback(() => {
     if (!navigator.geolocation) {
       pushIntel("GEOLOCATION UNAVAILABLE", "alert");
@@ -1504,6 +1581,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
         onFlyTo={flyTo}
         onAddFiles={addFiles}
         onZoomLayer={zoomToUserLayer}
+        onScreenshot={takeScreenshot}
+        onClearMeasure={clearMeasure}
+        onClearHighlight={clearHighlight}
       />
       {dragActive && (
         <div className="pointer-events-none fixed inset-0 z-[80] flex items-center justify-center bg-wv-black/40 backdrop-blur-[1px]">

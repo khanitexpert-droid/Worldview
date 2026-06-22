@@ -6,6 +6,7 @@ import LayersBody from "./DataLayersPanel";
 import IntelBody from "./IntelFeed";
 import EntityBody from "./EntityDetail";
 import UserDataPanel from "./UserDataPanel";
+import ToolsPanel from "./ToolsPanel";
 
 interface Tab {
   id: RightPanel;
@@ -18,16 +19,23 @@ const TABS: Tab[] = [
   { id: "intel", icon: "≣", label: "INTEL FEED" },
   { id: "layers", icon: "▦", label: "DATA LAYERS" },
   { id: "userdata", icon: "⤓", label: "MY DATA" },
+  { id: "tools", icon: "⚒", label: "TOOLS" },
 ];
 
 export default function RightRail({
   onFlyTo,
   onAddFiles,
   onZoomLayer,
+  onScreenshot,
+  onClearMeasure,
+  onClearHighlight,
 }: {
   onFlyTo: (lon: number, lat: number, h?: number) => void;
   onAddFiles: (files: File[]) => void;
   onZoomLayer: (id: string) => void;
+  onScreenshot: () => void;
+  onClearMeasure: () => void;
+  onClearHighlight: () => void;
 }) {
   const open = useWorldView((s) => s.rightPanel);
   const toggle = useWorldView((s) => s.toggleRightPanel);
@@ -36,6 +44,7 @@ export default function RightRail({
   const layers = useWorldView((s) => s.layers);
   const intelCount = useWorldView((s) => s.intel.length);
   const userLayerCount = useWorldView((s) => s.userLayers.length);
+  const activeTool = useWorldView((s) => s.activeTool);
 
   const activeLayers = LAYERS.filter((l) => layers[l.id]).length;
   const active = TABS.find((t) => t.id === open);
@@ -61,6 +70,13 @@ export default function RightRail({
         <span className="absolute -right-1 -top-1 min-w-[14px] rounded-full border border-wv-border bg-wv-darker px-1 text-center text-[8px] font-bold leading-[13px] text-wv-amber">
           {userLayerCount}
         </span>
+      ) : null;
+    if (id === "tools")
+      return activeTool ? (
+        <span
+          className="wv-live-dot absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full"
+          style={{ background: "#aaff00", boxShadow: "0 0 8px #aaff00" }}
+        />
       ) : null;
     return null;
   };
@@ -99,6 +115,13 @@ export default function RightRail({
             {active.id === "layers" && <LayersBody />}
             {active.id === "userdata" && (
               <UserDataPanel onAddFiles={onAddFiles} onZoom={onZoomLayer} />
+            )}
+            {active.id === "tools" && (
+              <ToolsPanel
+                onScreenshot={onScreenshot}
+                onClearMeasure={onClearMeasure}
+                onClearHighlight={onClearHighlight}
+              />
             )}
           </div>
         </div>

@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import type { FeedEntity, LayerId, SatOrbit, UserLayer } from "./types";
+import type { MeasureMode, MeasureUnit } from "./globeTools";
 import { LAYERS } from "./layers";
+
+/** an active on-globe tool (TOOLS panel). Screenshot is a one-shot action. */
+export type ToolId = "measure" | "highlight";
 
 interface IntelLine {
   id: number;
@@ -10,7 +14,7 @@ interface IntelLine {
 }
 
 /** which contextual side panel the right rail has open (null = collapsed) */
-export type RightPanel = "intel" | "selected" | "layers" | "userdata";
+export type RightPanel = "intel" | "selected" | "layers" | "userdata" | "tools";
 
 /** open-data provenance + freshness for the SATELLITES panel */
 export interface SatMeta {
@@ -50,6 +54,16 @@ interface WorldViewState {
 
   cursor: { lon: number; lat: number } | null;
   setCursor: (c: { lon: number; lat: number } | null) => void;
+
+  // ---- TOOLS (measure / highlight) ----
+  activeTool: ToolId | null;
+  setActiveTool: (t: ToolId | null) => void;
+  measureMode: MeasureMode;
+  setMeasureMode: (m: MeasureMode) => void;
+  measureUnit: MeasureUnit;
+  setMeasureUnit: (u: MeasureUnit) => void;
+  measureReadout: string | null; // live total/radius shown in the panel
+  setMeasureReadout: (s: string | null) => void;
 
   // ---- user-imported GIS layers (drag-dropped files) ----
   userLayers: UserLayer[];
@@ -111,6 +125,15 @@ export const useWorldView = create<WorldViewState>((set) => ({
 
   cursor: null,
   setCursor: (c) => set({ cursor: c }),
+
+  activeTool: null,
+  setActiveTool: (t) => set({ activeTool: t }),
+  measureMode: "distance",
+  setMeasureMode: (m) => set({ measureMode: m }),
+  measureUnit: "km",
+  setMeasureUnit: (u) => set({ measureUnit: u }),
+  measureReadout: null,
+  setMeasureReadout: (s) => set({ measureReadout: s }),
 
   userLayers: [],
   addUserLayer: (l) => set((s) => ({ userLayers: [l, ...s.userLayers] })),
