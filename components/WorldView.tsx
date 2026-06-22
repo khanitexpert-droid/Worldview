@@ -106,6 +106,14 @@ function branchImage(branch: string): string {
   return BASE_ARMY_IMAGE;
 }
 
+// active-fire flame glyph (white fill → tinted per fire by FRP severity; thin
+// dark outline so it reads against bright terrain). Sized per fire as well.
+const FLAME_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
+  "<path d='M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z' " +
+  "fill='#ffffff' stroke='#3a0a00' stroke-width='0.6' stroke-linejoin='round'/></svg>";
+const FLAME_IMAGE = `data:image/svg+xml,${encodeURIComponent(FLAME_SVG)}`;
+
 // satellites are propagated client-side every frame by SatelliteField, and
 // photoreal is a scene-level toggle (Google 3D tiles), not a polled feed — both
 // opt out of the generic poll/render pipeline entirely.
@@ -163,12 +171,20 @@ function quakeColor(mag: number): Cesium.Color {
   return C.cyan;
 }
 
-// active-fire dot tint by intensity (fire radiative power, MW): the hotter the
-// blaze, the redder the dot.
+// active-fire severity by fire radiative power (MW). Tuned to the displayed
+// (top-FRP) feed's distribution so the tiers actually spread: low ≲32, moderate,
+// high, and a hot "extreme" red for the standout blazes (top few %).
 function fireColor(frp: number): Cesium.Color {
-  if (frp >= 100) return C.red;
-  if (frp >= 30) return Cesium.Color.fromCssColorString("#ff7a3c");
-  return C.amber;
+  if (frp >= 120) return Cesium.Color.fromCssColorString("#ff2740"); // extreme
+  if (frp >= 60) return C.red; // high (#ff414e)
+  if (frp >= 32) return Cesium.Color.fromCssColorString("#ff7a3c"); // moderate
+  return Cesium.Color.fromCssColorString("#ffc24d"); // low (amber)
+}
+
+// flame size (px) scales with severity too — bigger blaze for higher FRP.
+function fireSize(frp: number): number {
+  const s = 11 + Math.sqrt(frp) * 1.5;
+  return s < 14 ? 14 : s > 34 ? 34 : s;
 }
 
 // tint per AIS vessel category (white glyph × this color)
@@ -282,18 +298,17 @@ function renderLayer(
   if (id === "fires") {
     for (const f of items as import("@/lib/types").Fire[]) {
       const eid = `fires:${f.id}`;
-      const col = fireColor(f.frp);
+      const size = fireSize(f.frp);
       ds.entities.add({
         id: eid,
         position: Cesium.Cartesian3.fromDegrees(f.lon, f.lat, 0),
-        point: {
-          pixelSize: 6,
-          color: col.withAlpha(0.7),
-          outlineColor: col,
-          outlineWidth: 1,
-          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.2, 2.6e7, 0.4),
-          // no disableDepthTestDistance: let the globe occlude fires on its far
-          // side (otherwise back-hemisphere points bleed through to the front).
+        billboard: {
+          image: FLAME_IMAGE,
+          color: fireColor(f.frp), // tinted white glyph → severity color
+          width: size,
+          height: size,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.0, 2.6e7, 0.45),
+          // no disableDepthTestDistance: let the globe occlude far-side fires.
         },
       });
       sel.set(eid, { kind: "fires", ...f });
