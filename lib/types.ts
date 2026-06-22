@@ -6,6 +6,7 @@ export type LayerId =
   | "earthquakes"
   | "ships"
   | "bases"
+  | "fires"
   | "events"
   | "photoreal";
 
@@ -132,10 +133,24 @@ export interface MilitaryBase {
   operator?: string; // operating force, when OSM records it
 }
 
+/** An active-fire / thermal-anomaly detection (real, from NASA FIRMS · VIIRS). */
+export interface Fire {
+  id: string;
+  lon: number;
+  lat: number;
+  brightness: number; // brightness temperature (Kelvin), VIIRS channel I-4
+  frp: number; // fire radiative power (MW) — proxy for fire intensity
+  confidence: string; // VIIRS: "low" | "nominal" | "high"
+  satellite: string; // e.g. "N" (Suomi-NPP) / "1" (NOAA-20)
+  daynight: string; // "D" | "N"
+  acq: number; // epoch ms of the detection (acq_date + acq_time)
+}
+
 export type FeedEntity =
   | ({ kind: "flights" } & Flight)
   | ({ kind: "satellites" } & Satellite)
   | ({ kind: "earthquakes" } & Earthquake)
   | ({ kind: "ships" } & Ship)
   | ({ kind: "bases" } & MilitaryBase)
+  | ({ kind: "fires" } & Fire)
   | ({ kind: "events" } & WorldEvent);

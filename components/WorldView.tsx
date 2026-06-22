@@ -11,6 +11,7 @@ import {
   fetchBases,
   fetchEarthquakes,
   fetchEvents,
+  fetchFires,
   fetchFlights,
   fetchShips,
   fetchSatellites,
@@ -71,13 +72,39 @@ const SHIP_DOT_IMAGE = `data:image/svg+xml,${encodeURIComponent(SHIP_DOT_SVG)}`;
 // below this ground speed (m/s ≈ 0.6 kn) a vessel is treated as stationary
 const SHIP_MOVING_MS = 0.3;
 
-// military-base marker: a five-point star (white + dark outline) tinted per
-// branch via the billboard's color.
-const BASE_SVG =
-  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
-  "<path d='M12 2.4l2.75 6.05 6.6.62-4.97 4.38 1.5 6.5L12 16.9 6.12 20l1.5-6.5L2.65 9.07l6.6-.62z' " +
-  "fill='#ffffff' stroke='#240a06' stroke-width='1' stroke-linejoin='round'/></svg>";
-const BASE_IMAGE = `data:image/svg+xml,${encodeURIComponent(BASE_SVG)}`;
+// military-base markers: a colored disc "badge" per branch with a dark glyph
+// (star = army/ground, anchor = naval, plane = air) and a faint glow ring. Much
+// more map-like than a plain dot. Built as baked-color SVGs so no billboard tint
+// is needed; the globe occludes far-side badges (no disableDepthTestDistance).
+function baseBadge(disc: string, ring: string, glyphDark: string, glyph: string) {
+  return (
+    "data:image/svg+xml," +
+    encodeURIComponent(
+      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
+        `<circle cx='12' cy='12' r='10' fill='${disc}'/>` +
+        `<circle cx='12' cy='12' r='10.6' fill='none' stroke='${ring}' stroke-width='1' opacity='0.55'/>` +
+        glyph.replace("__C__", glyphDark) +
+        "</svg>"
+    )
+  );
+}
+const STAR_GLYPH =
+  "<g transform='translate(12 12) scale(0.6) translate(-12 -12)'>" +
+  "<path d='M12 2.4l2.75 6.05 6.6.62-4.97 4.38 1.5 6.5L12 16.9 6.12 20l1.5-6.5L2.65 9.07l6.6-.62z' fill='__C__'/></g>";
+const ANCHOR_GLYPH =
+  "<g transform='translate(12 12) scale(0.58) translate(-12 -12)'>" +
+  "<path fill-rule='evenodd' d='M12 2C10.34 2 9 3.34 9 5c0 1.3.84 2.4 2 2.82V9H8v2h3v7.93C7.61 18.45 5 15.53 5 12H7l-3-4-3 4h2c0 4.97 4.03 9 9 9s9-4.03 9-9h2l-3-4-3 4h2c0 3.53-2.61 6.45-6 6.93V11h3V9h-3V7.82C14.16 7.4 15 6.3 15 5c0-1.66-1.34-3-3-3zm0 2c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1z' fill='__C__'/></g>";
+const PLANE_GLYPH =
+  "<g transform='translate(12 12) scale(0.62) translate(-12 -12)'>" +
+  "<path d='M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z' fill='__C__'/></g>";
+const BASE_ARMY_IMAGE = baseBadge("#ff5a4d", "#ffd9d3", "#2a0805", STAR_GLYPH);
+const BASE_NAVAL_IMAGE = baseBadge("#00e5ff", "#ccf8ff", "#02303a", ANCHOR_GLYPH);
+const BASE_AIR_IMAGE = baseBadge("#b14bff", "#e7ccff", "#1a0830", PLANE_GLYPH);
+function branchImage(branch: string): string {
+  if (branch === "NAVAL") return BASE_NAVAL_IMAGE;
+  if (branch === "AIR") return BASE_AIR_IMAGE;
+  return BASE_ARMY_IMAGE;
+}
 
 // satellites are propagated client-side every frame by SatelliteField, and
 // photoreal is a scene-level toggle (Google 3D tiles), not a polled feed — both
@@ -102,6 +129,9 @@ const POLL_MS: Record<PollLayerId, number> = {
   earthquakes: 60000,
   // bases are a bundled static snapshot (don't move) — effectively load-once.
   bases: 86_400_000,
+  // FIRMS refreshes a few times/day; poll every 15 min (well under the key's
+  // 5,000 transactions / 10-min limit, and the route is CDN-cached for 30 min).
+  fires: 900_000,
   // GDELT only refreshes upstream every ~15 min; poll at 3 min to catch each
   // new slice promptly. The client fetch is multi-query (~16s) so this is well
   // clear of overlapping itself.
@@ -116,6 +146,7 @@ const FETCHERS: Record<
   ships: fetchShips,
   earthquakes: fetchEarthquakes,
   bases: fetchBases,
+  fires: fetchFires,
   events: fetchEvents,
 };
 
@@ -132,16 +163,12 @@ function quakeColor(mag: number): Cesium.Color {
   return C.cyan;
 }
 
-// military-base star tint by branch (naval / air / ground)
-function baseColor(kind: string): Cesium.Color {
-  switch (kind) {
-    case "NAVAL":
-      return C.cyan;
-    case "AIR":
-      return C.violet;
-    default:
-      return Cesium.Color.fromCssColorString("#ff5a4d"); // ground base
-  }
+// active-fire dot tint by intensity (fire radiative power, MW): the hotter the
+// blaze, the redder the dot.
+function fireColor(frp: number): Cesium.Color {
+  if (frp >= 100) return C.red;
+  if (frp >= 30) return Cesium.Color.fromCssColorString("#ff7a3c");
+  return C.amber;
 }
 
 // tint per AIS vessel category (white glyph × this color)
@@ -232,20 +259,44 @@ function renderLayer(
   }
 
   if (id === "bases") {
+    // Branch-badge billboards (colored disc + glyph). Baked-color SVGs, sized in
+    // pixels and shrunk at distance so dense clusters stay legible.
     for (const b of items as import("@/lib/types").MilitaryBase[]) {
       const eid = `bases:${b.id}`;
       ds.entities.add({
         id: eid,
         position: Cesium.Cartesian3.fromDegrees(b.lon, b.lat, 0),
         billboard: {
-          image: BASE_IMAGE,
-          color: baseColor(b.branch),
-          scale: 0.6,
-          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 0.85, 2.6e7, 0.4),
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          image: branchImage(b.branch),
+          width: 22,
+          height: 22,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.0, 2.6e7, 0.4),
+          // no disableDepthTestDistance: let the globe occlude far-side badges.
         },
       });
       sel.set(eid, { kind: "bases", ...b });
+    }
+    return;
+  }
+
+  if (id === "fires") {
+    for (const f of items as import("@/lib/types").Fire[]) {
+      const eid = `fires:${f.id}`;
+      const col = fireColor(f.frp);
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(f.lon, f.lat, 0),
+        point: {
+          pixelSize: 6,
+          color: col.withAlpha(0.7),
+          outlineColor: col,
+          outlineWidth: 1,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.2, 2.6e7, 0.4),
+          // no disableDepthTestDistance: let the globe occlude fires on its far
+          // side (otherwise back-hemisphere points bleed through to the front).
+        },
+      });
+      sel.set(eid, { kind: "fires", ...f });
     }
     return;
   }
@@ -340,6 +391,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     satellites: [],
     earthquakes: [],
     bases: [],
+    fires: [],
     events: [],
     photoreal: [], // scene toggle, never carries feed data
   });

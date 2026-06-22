@@ -12,6 +12,9 @@ export interface LayerMeta {
   // scene-level toggles (e.g. the 3D basemap) aren't data feeds — they have no
   // contact count, so the panel shows ON/— instead of a number.
   noCount?: boolean;
+  // optional category the layer belongs to (e.g. "GROUND"). The layer panel
+  // prints a small header when the group changes — echoes deltasweep's grouping.
+  group?: string;
 }
 
 // Central registry — the HUD, the boot sequence and the renderers all read this.
@@ -56,20 +59,29 @@ export const LAYERS: LayerMeta[] = [
     info: "About 500,000 earthquakes are detected around the world each year — roughly 100,000 are felt, and around 100 cause damage.",
     defaultOn: false,
   },
-  // MILITARY BASES — temporarily disabled. The 2,685 star-billboard markers
-  // rendered as opaque black squares that clumped into a black blob over Asia.
-  // Re-enable once the renderer is fixed (use `point` graphics instead of the
-  // SVG billboard image). Data + fetcher + renderer remain in place, dormant.
-  // {
-  //   id: "bases",
-  //   label: "MILITARY BASES",
-  //   short: "BASE",
-  //   icon: "★",
-  //   color: "#ff5a4d",
-  //   source: "OPENSTREETMAP",
-  //   info: "Named military installations across the Middle East and Asia, from OpenStreetMap.",
-  //   defaultOn: false,
-  // },
+  // ---- GROUND group (deltasweep-style) ----
+  {
+    id: "bases",
+    label: "MILITARY BASES",
+    short: "BASE",
+    icon: "★",
+    color: "#ff5a4d",
+    source: "OPENSTREETMAP",
+    info: "Named military installations across the Middle East and Asia, sourced from OpenStreetMap. Tinted by branch — ground (red), naval (cyan), air (violet).",
+    defaultOn: false,
+    group: "GROUND",
+  },
+  {
+    id: "fires",
+    label: "ACTIVE FIRES",
+    short: "FIRE",
+    icon: "🔥",
+    color: "#ff7a3c",
+    source: "NASA FIRMS · VIIRS",
+    info: "Near-real-time active fires and thermal anomalies detected from orbit by the VIIRS instrument (Suomi-NPP), refreshed by NASA FIRMS several times a day. Each dot is a ~375 m hotspot from the last 24 hours; brighter/redder means higher fire radiative power.",
+    defaultOn: false,
+    group: "GROUND",
+  },
   {
     id: "events",
     label: "WORLD EVENTS",

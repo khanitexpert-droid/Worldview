@@ -3,8 +3,51 @@
 import { useWorldView } from "@/lib/store";
 import { LAYER_BY_ID } from "@/lib/layers";
 import type { FeedEntity } from "@/lib/types";
+import { countryFlag } from "@/lib/countryFlags";
 import FlightExtras from "./FlightExtras";
 import VesselExtras from "./VesselExtras";
+
+// branch → header label, TYPE label, and accent color (matches the map marker)
+function baseBranch(branch: string): {
+  label: string;
+  type: string;
+  color: string;
+} {
+  if (branch === "NAVAL")
+    return { label: "NAVAL BASE", type: "Naval Base", color: "#00e5ff" };
+  if (branch === "AIR")
+    return { label: "AIR BASE", type: "Air Base", color: "#b14bff" };
+  return { label: "ARMY / GROUND", type: "Army / Ground", color: "#ff5a4d" };
+}
+
+/** External action buttons for a selected base — real public links, no API. */
+function BaseExtras({
+  name,
+  lat,
+  lon,
+}: {
+  name: string;
+  lat: number;
+  lon: number;
+}) {
+  const wiki = `https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(
+    name
+  )}`;
+  // Google Maps centred on the base with the satellite layer forced (!3m1!1e3)
+  const sat = `https://www.google.com/maps/@${lat},${lon},4000m/data=!3m1!1e3`;
+  const cls =
+    "border border-wv-border py-1.5 text-center text-[10px] font-bold tracking-[0.16em] text-wv-text transition-colors hover:border-wv-cyan hover:text-wv-cyan hover:box-glow-cyan";
+  return (
+    <div className="mt-2 grid grid-cols-2 gap-2">
+      <a href={wiki} target="_blank" rel="noopener noreferrer" className={cls}>
+        WIKIPEDIA →
+      </a>
+      <a href={sat} target="_blank" rel="noopener noreferrer" className={cls}>
+        SATELLITE →
+      </a>
+    </div>
+  );
+}
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -131,17 +174,52 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
         ],
       };
     case "bases": {
-      const kind =
-        e.branch === "NAVAL"
-          ? "NAVAL BASE"
-          : e.branch === "AIR"
-            ? "AIR BASE"
-            : "MILITARY BASE";
-      const rows: [string, React.ReactNode][] = [["TYPE", kind]];
-      if (e.country) rows.push(["COUNTRY", e.country]);
+      const br = baseBranch(e.branch);
+      const fl = countryFlag(e.country);
+      const rows: [string, React.ReactNode][] = [];
+      rows.push([
+        "LOCATION",
+        e.country ? (
+          <span>
+            {fl && <span className="mr-1">{fl.emoji}</span>}
+            {fl && <span className="text-wv-muted">{fl.iso2} </span>}
+            {e.country}
+          </span>
+        ) : (
+          "—"
+        ),
+      ]);
       if (e.operator) rows.push(["OPERATOR", e.operator]);
-      rows.push(["SOURCE", "OPENSTREETMAP"]);
+      rows.push(["TYPE", <span style={{ color: br.color }}>{br.type}</span>]);
       return { title: e.name, rows };
+    }
+    case "fires": {
+      const sat =
+        e.satellite === "N"
+          ? "SUOMI-NPP"
+          : e.satellite === "1" || e.satellite === "N20"
+            ? "NOAA-20"
+            : e.satellite || "VIIRS";
+      // VIIRS reports confidence as a single letter (l/n/h); MODIS as 0–100.
+      const conf =
+        e.confidence === "h"
+          ? "High"
+          : e.confidence === "n"
+            ? "Nominal"
+            : e.confidence === "l"
+              ? "Low"
+              : e.confidence || "—";
+      return {
+        title: "ACTIVE FIRE",
+        rows: [
+          ["FRP", `${e.frp.toFixed(1)} MW`],
+          ["BRIGHTNESS", `${e.brightness.toFixed(0)} K`],
+          ["CONFIDENCE", conf],
+          ["SENSOR", `${sat} · ${e.daynight === "N" ? "NIGHT" : "DAY"}`],
+          ["DETECTED", new Date(e.acq).toISOString().slice(11, 16) + "Z"],
+          ["SOURCE", "NASA FIRMS"],
+        ],
+      };
     }
     case "events":
       return {
@@ -184,20 +262,26 @@ export default function EntityBody({
   const meta = LAYER_BY_ID[selected.kind];
   const { title, rows } = fields(selected);
   const e = selected as unknown as { lon: number; lat: number; altKm?: number };
+  // bases get a branch-specific header + accent (army/naval/air); everything
+  // else uses its layer's label + color.
+  const accent =
+    selected.kind === "bases" ? baseBranch(selected.branch).color : meta.color;
+  const headerLabel =
+    selected.kind === "bases" ? baseBranch(selected.branch).label : meta.label;
 
   return (
     <div className="px-3 py-3">
       <div
         className="mb-2 flex items-center gap-2 text-[10px] font-bold tracking-[0.18em]"
-        style={{ color: meta.color }}
+        style={{ color: accent }}
       >
         <span>{meta.icon}</span>
-        <span>{meta.label}</span>
+        <span>{headerLabel}</span>
       </div>
       <div>
         <div
           className="mb-2 truncate text-[13px] font-bold"
-          style={{ color: meta.color }}
+          style={{ color: accent }}
         >
           {title}
         </div>
@@ -239,6 +323,11 @@ export default function EntityBody({
         >
           ⌖ LOCK & TRACK
         </button>
+
+        {/* real public action links for a base (Wikipedia + satellite imagery) */}
+        {selected.kind === "bases" && (
+          <BaseExtras name={selected.name} lat={e.lat} lon={e.lon} />
+        )}
       </div>
     </div>
   );

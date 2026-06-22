@@ -1,5 +1,6 @@
 import type {
   Earthquake,
+  Fire,
   Flight,
   MilitaryBase,
   Ship,
@@ -28,6 +29,10 @@ export const fetchSatellites = () =>
   getJSON<SatellitesResponse>("/api/satellites");
 export const fetchEarthquakes = () =>
   getJSON<{ items: Earthquake[] }>("/api/earthquakes");
+// Active fires / thermal anomalies — NASA FIRMS (VIIRS), relayed server-side so
+// the FIRMS map key is never exposed to the browser.
+export const fetchFires = () =>
+  getJSON<{ items: Fire[]; source?: string }>("/api/fires");
 // Bundled static snapshot of real OSM military bases (they don't move, so we
 // don't poll an API for them). Wrapped to match the generic feed shape.
 export const fetchBases = async () => ({

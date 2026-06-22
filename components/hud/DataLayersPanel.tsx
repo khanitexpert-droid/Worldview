@@ -38,18 +38,26 @@ export default function LayersBody() {
 
   return (
     <div className="p-1.5">
-      {LAYERS.map((l) => {
+      {LAYERS.map((l, i) => {
         const on = layers[l.id];
+        // print a small category header when the group changes (e.g. "GROUND")
+        const groupHeader =
+          l.group && l.group !== LAYERS[i - 1]?.group ? l.group : null;
         return (
-          <button
-            key={l.id}
-            onClick={() => toggleLayer(l.id)}
-            onMouseEnter={(e) => openTip(e, l)}
-            onMouseLeave={() => setTip(null)}
-            className={`group flex w-full items-center gap-2.5 px-2 py-2 text-left transition-colors ${
-              on ? "bg-white/[0.03]" : "opacity-55 hover:opacity-90"
-            }`}
-          >
+          <div key={l.id}>
+            {groupHeader && (
+              <div className="mt-2 mb-0.5 px-2 text-[9px] font-bold tracking-[0.25em] text-wv-muted/80">
+                {groupHeader}
+              </div>
+            )}
+            <button
+              onClick={() => toggleLayer(l.id)}
+              onMouseEnter={(e) => openTip(e, l)}
+              onMouseLeave={() => setTip(null)}
+              className={`group flex w-full items-center gap-2.5 px-2 py-2 text-left transition-colors ${
+                on ? "bg-white/[0.03]" : "opacity-55 hover:opacity-90"
+              }`}
+            >
             {/* toggle pip */}
             <span
               className="flex h-3 w-3 shrink-0 items-center justify-center border"
@@ -83,7 +91,8 @@ export default function LayersBody() {
             >
               {l.noCount ? (on ? "ON" : "—") : on ? counts[l.id] ?? 0 : "—"}
             </span>
-          </button>
+            </button>
+          </div>
         );
       })}
 
