@@ -26,6 +26,7 @@ import { SatelliteField } from "@/lib/satField";
 import { EventFx } from "@/lib/eventFx";
 import { MapLabels } from "@/lib/mapLabels";
 import { loadBorders } from "@/lib/borders";
+import { ingestFile, applyVectorStyle, formatFromName } from "@/lib/userData";
 
 import TopBar from "./hud/TopBar";
 import Controls from "./hud/Controls";
@@ -82,6 +83,16 @@ const BASE_IMAGE = `data:image/svg+xml,${encodeURIComponent(BASE_SVG)}`;
 // photoreal is a scene-level toggle (Google 3D tiles), not a polled feed — both
 // opt out of the generic poll/render pipeline entirely.
 type PollLayerId = Exclude<LayerId, "satellites" | "photoreal">;
+
+// colors cycled through for each imported user layer (MY DATA)
+const USER_LAYER_COLORS = [
+  "#00e5ff",
+  "#ff2d95",
+  "#5dff9e",
+  "#ffb347",
+  "#b14bff",
+  "#ffe14d",
+];
 
 const POLL_MS: Record<PollLayerId, number> = {
   flights: 15000,
@@ -306,6 +317,21 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   // ---- Google Photorealistic 3D Tiles (lazy-created scene primitive) ----
   const tilesetRef = useRef<Cesium.Cesium3DTileset | null>(null);
   const photorealLoadingRef = useRef(false);
+  // ---- user-imported GIS layers (drag-dropped): id → live Cesium objects ----
+  const userLayerObjsRef = useRef<
+    Map<
+      string,
+      {
+        dataSource?: Cesium.DataSource;
+        imageryLayer?: Cesium.ImageryLayer;
+        rectangle?: Cesium.Rectangle;
+        appliedColor?: string; // last style pushed to the entities…
+        appliedOpacity?: number; // …so we only re-style when it changes
+      }
+    >
+  >(new Map());
+  const userColorIdxRef = useRef(0);
+  const [dragActive, setDragActive] = useState(false);
 
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Record<LayerId, unknown[]>>({
@@ -320,6 +346,8 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
 
   const layers = useWorldView((s) => s.layers);
   const photoreal = useWorldView((s) => s.layers.photoreal);
+  const userLayers = useWorldView((s) => s.userLayers);
+  const addUserLayer = useWorldView((s) => s.addUserLayer);
   const setSelected = useWorldView((s) => s.setSelected);
   const updateSelected = useWorldView((s) => s.updateSelected);
   const setCount = useWorldView((s) => s.setCount);
@@ -329,6 +357,86 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const satCounts = useWorldView((s) => s.satCounts);
   const setSatCounts = useWorldView((s) => s.setSatCounts);
   const setSatMeta = useWorldView((s) => s.setSatMeta);
+
+  // fly to an imported layer's extent (vector → its data; raster → its rectangle)
+  const zoomToUserLayer = useCallback((id: string) => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const obj = userLayerObjsRef.current.get(id);
+    if (!obj) return;
+    if (obj.dataSource) viewer.flyTo(obj.dataSource, { duration: 1.5 });
+    else if (obj.rectangle)
+      viewer.camera.flyTo({ destination: obj.rectangle, duration: 1.5 });
+  }, []);
+
+  // ingest dropped/browsed GIS files → add to the viewer + the MY DATA store
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      const viewer = viewerRef.current;
+      if (!viewer) return;
+      for (const file of files) {
+        if (!formatFromName(file.name)) {
+          pushIntel(`UNSUPPORTED FILE · ${file.name}`, "alert");
+          continue;
+        }
+        const id = `user-${Date.now().toString(36)}-${Math.random()
+          .toString(36)
+          .slice(2, 7)}`;
+        const color =
+          USER_LAYER_COLORS[
+            userColorIdxRef.current++ % USER_LAYER_COLORS.length
+          ];
+        pushIntel(`IMPORTING · ${file.name}…`, "info");
+        try {
+          const res = await ingestFile(file, viewer, color);
+          if (res.dataSource) {
+            res.dataSource.show = true;
+            await viewer.dataSources.add(res.dataSource);
+          }
+          if (res.imageryLayer) viewer.imageryLayers.add(res.imageryLayer);
+          userLayerObjsRef.current.set(id, {
+            dataSource: res.dataSource,
+            imageryLayer: res.imageryLayer,
+            rectangle: res.rectangle,
+            // the loader already styled the entities with `color` at full
+            // opacity, so the reconcile below won't re-iterate them on import
+            appliedColor: color,
+            appliedOpacity: 1,
+          });
+          addUserLayer({
+            id,
+            name: res.name,
+            kind: res.kind,
+            format: res.format,
+            visible: true,
+            opacity: 1,
+            color,
+            featureCount: res.featureCount,
+            note: res.note,
+          });
+          pushIntel(
+            `LAYER ADDED · ${res.name}${
+              res.featureCount != null ? ` · ${res.featureCount} features` : ""
+            }`,
+            "ok"
+          );
+          useWorldView.getState().setRightPanel("userdata");
+          setTimeout(() => zoomToUserLayer(id), 200);
+        } catch (err) {
+          // handled + surfaced in the intel feed below; warn (not error) so the
+          // Next dev overlay doesn't pop for an expected bad-file case
+          console.warn("[worldview] import failed", err);
+          pushIntel(
+            `IMPORT FAILED · ${file.name} — ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            "alert"
+          );
+        }
+      }
+    },
+    [pushIntel, addUserLayer, zoomToUserLayer]
+  );
 
   // ---- init viewer once ----
   useEffect(() => {
@@ -614,6 +722,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       // viewer.destroy() disposes its primitives (incl. the tileset); just drop refs
       tilesetRef.current = null;
       photorealLoadingRef.current = false;
+      userLayerObjsRef.current.clear();
       viewer.destroy();
       viewerRef.current = null;
     };
@@ -980,6 +1089,81 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     }
   }, [photoreal, ready, pushIntel]);
 
+  // ---- user layers: reconcile Cesium objects with the store ----
+  // (visibility / opacity / color edits, and removal when a layer is deleted)
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !ready) return;
+    const objs = userLayerObjsRef.current;
+    const ids = new Set(userLayers.map((l) => l.id));
+    for (const [id, obj] of [...objs]) {
+      if (!ids.has(id)) {
+        if (obj.dataSource) viewer.dataSources.remove(obj.dataSource, true);
+        if (obj.imageryLayer) viewer.imageryLayers.remove(obj.imageryLayer, true);
+        objs.delete(id);
+      }
+    }
+    for (const l of userLayers) {
+      const obj = objs.get(l.id);
+      if (!obj) continue;
+      if (obj.dataSource) {
+        obj.dataSource.show = l.visible;
+        // only re-iterate the (potentially huge) entity set when the user
+        // actually changed color/opacity — not on every unrelated store change
+        if (obj.appliedColor !== l.color || obj.appliedOpacity !== l.opacity) {
+          applyVectorStyle(obj.dataSource, l.color, l.opacity);
+          obj.appliedColor = l.color;
+          obj.appliedOpacity = l.opacity;
+        }
+      }
+      if (obj.imageryLayer) {
+        obj.imageryLayer.show = l.visible;
+        obj.imageryLayer.alpha = l.opacity;
+      }
+    }
+  }, [userLayers, ready]);
+
+  // ---- drag-and-drop GIS files anywhere onto the app ----
+  useEffect(() => {
+    if (!ready) return;
+    let depth = 0;
+    const hasFiles = (e: DragEvent) =>
+      !!e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth++;
+      setDragActive(true);
+    };
+    const onOver = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragActive(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      e.preventDefault();
+      depth = 0;
+      setDragActive(false);
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length) addFiles(files);
+    };
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [ready, addFiles]);
+
   // ---- render the snap-on-poll layers when data/layers change ----
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -1249,7 +1433,24 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       <SearchBar onFlyTo={flyTo} onFlyToRect={flyToRect} />
       <Controls onReset={resetView} onLocate={locateMe} />
       <StatusBar />
-      <RightRail onFlyTo={flyTo} />
+      <RightRail
+        onFlyTo={flyTo}
+        onAddFiles={addFiles}
+        onZoomLayer={zoomToUserLayer}
+      />
+      {dragActive && (
+        <div className="pointer-events-none fixed inset-0 z-[80] flex items-center justify-center bg-wv-black/40 backdrop-blur-[1px]">
+          <div className="hud-panel corner-ticks box-glow-cyan border-2 border-dashed border-wv-cyan px-10 py-7 text-center">
+            <div className="text-3xl text-wv-cyan">⤓</div>
+            <div className="mt-2 text-[12px] font-bold tracking-[0.2em] text-wv-text">
+              DROP TO IMPORT LAYER
+            </div>
+            <div className="mt-1 text-[10px] text-wv-muted">
+              GeoJSON · Shapefile .zip · KML/KMZ
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

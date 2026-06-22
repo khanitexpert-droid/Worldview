@@ -9,6 +9,19 @@ export type LayerId =
   | "events"
   | "photoreal";
 
+/** A user-imported GIS layer (drag-dropped GeoJSON / Shapefile / KML / GeoTIFF). */
+export interface UserLayer {
+  id: string;
+  name: string;
+  kind: "vector" | "raster";
+  format: "geojson" | "shapefile" | "kml" | "geotiff";
+  visible: boolean;
+  opacity: number; // 0..1
+  color: string; // css hex (vector styling)
+  featureCount?: number; // vector
+  note?: string; // e.g. dimensions for raster
+}
+
 export interface Flight {
   id: string;
   callsign: string;

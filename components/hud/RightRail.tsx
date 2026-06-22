@@ -5,6 +5,7 @@ import { LAYERS } from "@/lib/layers";
 import LayersBody from "./DataLayersPanel";
 import IntelBody from "./IntelFeed";
 import EntityBody from "./EntityDetail";
+import UserDataPanel from "./UserDataPanel";
 
 interface Tab {
   id: RightPanel;
@@ -16,12 +17,17 @@ const TABS: Tab[] = [
   { id: "selected", icon: "⌖", label: "SELECTED" },
   { id: "intel", icon: "≣", label: "INTEL FEED" },
   { id: "layers", icon: "▦", label: "DATA LAYERS" },
+  { id: "userdata", icon: "⤓", label: "MY DATA" },
 ];
 
 export default function RightRail({
   onFlyTo,
+  onAddFiles,
+  onZoomLayer,
 }: {
   onFlyTo: (lon: number, lat: number, h?: number) => void;
+  onAddFiles: (files: File[]) => void;
+  onZoomLayer: (id: string) => void;
 }) {
   const open = useWorldView((s) => s.rightPanel);
   const toggle = useWorldView((s) => s.toggleRightPanel);
@@ -29,6 +35,7 @@ export default function RightRail({
   const selected = useWorldView((s) => s.selected);
   const layers = useWorldView((s) => s.layers);
   const intelCount = useWorldView((s) => s.intel.length);
+  const userLayerCount = useWorldView((s) => s.userLayers.length);
 
   const activeLayers = LAYERS.filter((l) => layers[l.id]).length;
   const active = TABS.find((t) => t.id === open);
@@ -49,6 +56,12 @@ export default function RightRail({
           {activeLayers}
         </span>
       );
+    if (id === "userdata")
+      return userLayerCount > 0 ? (
+        <span className="absolute -right-1 -top-1 min-w-[14px] rounded-full border border-wv-border bg-wv-darker px-1 text-center text-[8px] font-bold leading-[13px] text-wv-amber">
+          {userLayerCount}
+        </span>
+      ) : null;
     return null;
   };
 
@@ -84,6 +97,9 @@ export default function RightRail({
             {active.id === "selected" && <EntityBody onFlyTo={onFlyTo} />}
             {active.id === "intel" && <IntelBody />}
             {active.id === "layers" && <LayersBody />}
+            {active.id === "userdata" && (
+              <UserDataPanel onAddFiles={onAddFiles} onZoom={onZoomLayer} />
+            )}
           </div>
         </div>
       )}

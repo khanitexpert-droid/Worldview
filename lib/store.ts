@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { FeedEntity, LayerId, SatOrbit } from "./types";
+import type { FeedEntity, LayerId, SatOrbit, UserLayer } from "./types";
 import { LAYERS } from "./layers";
 
 interface IntelLine {
@@ -10,7 +10,7 @@ interface IntelLine {
 }
 
 /** which contextual side panel the right rail has open (null = collapsed) */
-export type RightPanel = "intel" | "selected" | "layers";
+export type RightPanel = "intel" | "selected" | "layers" | "userdata";
 
 /** open-data provenance + freshness for the SATELLITES panel */
 export interface SatMeta {
@@ -50,6 +50,14 @@ interface WorldViewState {
 
   cursor: { lon: number; lat: number } | null;
   setCursor: (c: { lon: number; lat: number } | null) => void;
+
+  // ---- user-imported GIS layers (drag-dropped files) ----
+  userLayers: UserLayer[];
+  addUserLayer: (l: UserLayer) => void;
+  removeUserLayer: (id: string) => void;
+  toggleUserLayer: (id: string) => void;
+  setUserLayerOpacity: (id: string, opacity: number) => void;
+  setUserLayerColor: (id: string, color: string) => void;
 }
 
 const initialLayers = Object.fromEntries(
@@ -103,6 +111,27 @@ export const useWorldView = create<WorldViewState>((set) => ({
 
   cursor: null,
   setCursor: (c) => set({ cursor: c }),
+
+  userLayers: [],
+  addUserLayer: (l) => set((s) => ({ userLayers: [l, ...s.userLayers] })),
+  removeUserLayer: (id) =>
+    set((s) => ({ userLayers: s.userLayers.filter((l) => l.id !== id) })),
+  toggleUserLayer: (id) =>
+    set((s) => ({
+      userLayers: s.userLayers.map((l) =>
+        l.id === id ? { ...l, visible: !l.visible } : l
+      ),
+    })),
+  setUserLayerOpacity: (id, opacity) =>
+    set((s) => ({
+      userLayers: s.userLayers.map((l) =>
+        l.id === id ? { ...l, opacity } : l
+      ),
+    })),
+  setUserLayerColor: (id, color) =>
+    set((s) => ({
+      userLayers: s.userLayers.map((l) => (l.id === id ? { ...l, color } : l)),
+    })),
 }));
 
 // dev-only handle for debugging/verification (stripped from production bundles)
