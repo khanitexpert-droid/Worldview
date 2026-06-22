@@ -110,7 +110,7 @@ export default function SearchBar({
   };
 
   return (
-    <div ref={boxRef} className="fixed top-[72px] right-3 z-40 w-72">
+    <div ref={boxRef} className="fixed top-[88px] right-3 z-40 w-60">
       <div className="hud-panel corner-ticks flex items-center gap-2 px-2.5 py-1.5">
         <span className="text-wv-cyan glow-cyan text-[13px] leading-none">⌕</span>
         <input
