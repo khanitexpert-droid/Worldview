@@ -110,7 +110,7 @@ export default function SearchBar({
   };
 
   return (
-    <div ref={boxRef} className="fixed top-[88px] right-3 z-40 w-60">
+    <div ref={boxRef} className="fixed top-[88px] right-3 z-40 w-[168px]">
       <div className="hud-panel corner-ticks flex items-center gap-2 px-2.5 py-1.5">
         <span className="text-wv-cyan glow-cyan text-[13px] leading-none">⌕</span>
         <input
@@ -118,7 +118,7 @@ export default function SearchBar({
           onChange={(e) => setQ(e.target.value)}
           onFocus={() => results.length > 0 && setOpen(true)}
           onKeyDown={onKey}
-          placeholder="SEARCH CITY / COUNTRY…"
+          placeholder="SEARCH…"
           spellCheck={false}
           className="w-full bg-transparent text-[11px] tracking-wide text-wv-text placeholder:text-wv-muted focus:outline-none"
         />
