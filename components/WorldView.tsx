@@ -1446,7 +1446,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
               DROP TO IMPORT LAYER
             </div>
             <div className="mt-1 text-[10px] text-wv-muted">
-              GeoJSON · Shapefile .zip · KML/KMZ
+              GeoJSON · Shapefile .zip · KML/KMZ · GeoTIFF
             </div>
           </div>
         </div>

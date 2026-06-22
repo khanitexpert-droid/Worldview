@@ -8,11 +8,6 @@ import shp from "shpjs";
 import { fromArrayBuffer } from "geotiff";
 import type { UserLayer } from "./types";
 
-// Raster (GeoTIFF) import is built but not yet verified end-to-end, so it's
-// gated behind an env flag — the live build ships only the tested vector
-// formats. Set NEXT_PUBLIC_RASTER_IMPORT=1 to re-enable raster.
-const RASTER_ENABLED = process.env.NEXT_PUBLIC_RASTER_IMPORT === "1";
-
 export interface IngestResult {
   kind: UserLayer["kind"];
   format: UserLayer["format"];
@@ -160,11 +155,6 @@ export async function ingestFile(
   }
 
   // ---------- RASTER (GeoTIFF) ----------
-  if (!RASTER_ENABLED) {
-    throw new Error(
-      "Raster (GeoTIFF) import is coming soon — for now drop GeoJSON, Shapefile .zip, or KML."
-    );
-  }
   return ingestGeoTiff(file);
 }
 

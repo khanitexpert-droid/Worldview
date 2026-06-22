@@ -33,14 +33,14 @@ export default function UserDataPanel({
           DROP FILES or BROWSE
         </span>
         <span className="text-[9px] text-wv-muted">
-          GeoJSON · Shapefile .zip · KML/KMZ
+          GeoJSON · Shapefile .zip · KML/KMZ · GeoTIFF
         </span>
       </button>
       <input
         ref={fileRef}
         type="file"
         multiple
-        accept=".geojson,.json,.zip,.shp,.kml,.kmz"
+        accept=".geojson,.json,.zip,.shp,.kml,.kmz,.tif,.tiff"
         className="hidden"
         onChange={(e) => {
           if (e.target.files?.length) onAddFiles([...e.target.files]);
