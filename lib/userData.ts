@@ -1,12 +1,43 @@
 // Ingest drag-dropped GIS files into Cesium layers.
 // Vector  → GeoJsonDataSource / KmlDataSource (GeoJSON, Shapefile-zip, KML/KMZ)
-// Raster  → SingleTileImageryProvider over the file's bounding box (GeoTIFF)
+// Raster  → TIFFImageryProvider (GeoTIFF/COG): streams the file's own internal
+//           tiles + overview pyramid and shows the right level for the current
+//           zoom, so it stays sharp and reads only the visible tiles (handles
+//           multi-GB COGs). Replaces the old "downsample to one 2048px texture".
 // All client-side; no backend.
 
 import * as Cesium from "cesium";
 import shp from "shpjs";
-import { fromArrayBuffer } from "geotiff";
+import { fromBlob, fromUrl } from "geotiff";
+import { TIFFImageryProvider } from "tiff-imagery-provider";
+import proj4 from "proj4";
 import type { UserLayer } from "./types";
+
+/**
+ * Reproject a COG's CRS to WGS84 for the tiled provider. EPSG:4326 / 3857 are
+ * handled natively (return undefined). proj4 only ships 4326/3857 defs, so we
+ * derive UTM strings from the EPSG code, covering the CRSs almost all real
+ * imagery uses: 326## = WGS84/UTM ## N, 327## = WGS84/UTM ## S (Sentinel-2,
+ * Landsat, drone), and 269## = NAD83/UTM ## N (US NAIP etc.). Unknown CRSs
+ * return undefined and the provider raises a clear error (reproject it first
+ * with `gdalwarp -t_srs EPSG:4326`).
+ */
+function cogProjFunc(code: number) {
+  if (code === 4326 || code === 3857) return undefined;
+  let def: string | null = null;
+  if (code >= 32601 && code <= 32660)
+    def = `+proj=utm +zone=${code - 32600} +datum=WGS84 +units=m +no_defs +type=crs`;
+  else if (code >= 32701 && code <= 32760)
+    def = `+proj=utm +zone=${code - 32700} +south +datum=WGS84 +units=m +no_defs +type=crs`;
+  else if (code >= 26901 && code <= 26923)
+    def = `+proj=utm +zone=${code - 26900} +datum=NAD83 +units=m +no_defs +type=crs`;
+  if (!def) return undefined;
+  const conv = proj4(def, "WGS84");
+  return {
+    project: (pos: number[]) => conv.inverse(pos), // [lon,lat] → [x,y]
+    unproject: (pos: number[]) => conv.forward(pos), // [x,y] → [lon,lat]
+  };
+}
 
 export interface IngestResult {
   kind: UserLayer["kind"];
@@ -158,107 +189,127 @@ export async function ingestFile(
   return ingestGeoTiff(file);
 }
 
-const MAX_TEX = 2048; // cap the rendered texture's long edge (perf + canvas limits)
-
 async function ingestGeoTiff(file: File): Promise<IngestResult> {
-  const buf = await file.arrayBuffer();
-  const tiff = await fromArrayBuffer(buf);
-  const image = await tiff.getImage();
+  // 1) Read ONLY the header/metadata via partial (range) reads — never pull the
+  //    whole file into memory, so multi-GB COGs are fine. getImageCount() is the
+  //    number of IFDs = the full-resolution image + its overview levels (= the
+  //    pyramid). >1 means the file has overviews and will stay sharp + fast.
+  let w = 0;
+  let h = 0;
+  let levels = 1;
+  try {
+    const tiff = await fromBlob(file);
+    const image = await tiff.getImage();
+    w = image.getWidth();
+    h = image.getHeight();
+    levels = await tiff.getImageCount();
+  } catch {
+    // non-fatal — the tiled provider below re-reads the file itself
+  }
 
-  // Geo metadata + projection check (client-side can only place WGS84 cleanly).
-  const keys = (image.getGeoKeys?.() ?? {}) as Record<string, number>;
-  const projected = keys.ProjectedCSTypeGeoKey;
-  const [west, south, east, north] = image.getBoundingBox();
-  const looksLikeDegrees =
-    Math.abs(west) <= 180 &&
-    Math.abs(east) <= 180 &&
-    Math.abs(south) <= 90 &&
-    Math.abs(north) <= 90;
-  if (projected && projected !== 4326 && !looksLikeDegrees) {
+  // 2) Tiled provider: streams the COG's internal tiles + overviews and shows
+  //    the right level for the current zoom (the fix for the blurry single
+  //    2048px texture). Reads only the visible tiles, and reprojects common
+  //    CRSs (Web Mercator / UTM) onto the globe on the fly.
+  let provider: TIFFImageryProvider;
+  try {
+    provider = await TIFFImageryProvider.fromUrl(file, {
+      projFunc: cogProjFunc,
+      // the provider defaults to nearest-neighbour resampling (hard blocky
+      // pixels when scaled); bilinear + larger tiles match QGIS's smooth look.
+      tileSize: 512,
+      renderOptions: { resampleMethod: "bilinear" },
+    });
+  } catch (err) {
     throw new Error(
-      `GeoTIFF is in a projected CRS (EPSG:${projected}); client-side load needs EPSG:4326 (WGS84). Reproject it, or we add a tiling backend.`
+      `Couldn't tile this GeoTIFF — ${
+        err instanceof Error ? err.message : String(err)
+      }. Tip: convert it to a Cloud-Optimized GeoTIFF first ` +
+        `(gdal_translate in.tif out_cog.tif -of COG).`
     );
   }
 
-  const w = image.getWidth();
-  const h = image.getHeight();
-  const scale = Math.min(1, MAX_TEX / Math.max(w, h));
-  const outW = Math.max(1, Math.round(w * scale));
-  const outH = Math.max(1, Math.round(h * scale));
+  // The provider's bundled typings union ImageData into requestImage()'s return,
+  // which Cesium's ImageryProvider type doesn't list — a types-only mismatch
+  // (runtime is a valid Cesium imagery provider), so cast across it.
+  const cesiumProvider = provider as unknown as Cesium.ImageryProvider;
+  const imageryLayer = new Cesium.ImageryLayer(cesiumProvider);
+  const rectangle = cesiumProvider.rectangle
+    ? Cesium.Rectangle.clone(cesiumProvider.rectangle)
+    : undefined;
 
-  const spp = image.getSamplesPerPixel();
-  const nodata = image.getGDALNoData?.();
-  const data = (await image.readRasters({
-    interleave: true,
-    width: outW,
-    height: outH,
-  })) as unknown as ArrayLike<number> & { constructor: { name: string } };
-
-  const isU8 =
-    data.constructor.name === "Uint8Array" ||
-    data.constructor.name === "Uint8ClampedArray";
-
-  // For non-8-bit data (DEMs, 16-bit imagery), normalize each band to 0..255.
-  const bandMin: number[] = new Array(spp).fill(Infinity);
-  const bandMax: number[] = new Array(spp).fill(-Infinity);
-  if (!isU8) {
-    for (let p = 0; p < outW * outH; p++) {
-      for (let b = 0; b < spp; b++) {
-        const v = data[p * spp + b];
-        if (nodata != null && v === nodata) continue;
-        if (!Number.isFinite(v)) continue;
-        if (v < bandMin[b]) bandMin[b] = v;
-        if (v > bandMax[b]) bandMax[b] = v;
-      }
-    }
-  }
-  const norm = (v: number, b: number) => {
-    if (isU8) return v;
-    const lo = bandMin[b];
-    const hi = bandMax[b];
-    if (!Number.isFinite(lo) || hi === lo) return 0;
-    return ((v - lo) / (hi - lo)) * 255;
-  };
-
-  const canvas = document.createElement("canvas");
-  canvas.width = outW;
-  canvas.height = outH;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not create 2D canvas for GeoTIFF");
-  const img = ctx.createImageData(outW, outH);
-
-  for (let p = 0; p < outW * outH; p++) {
-    const o = p * 4;
-    let alpha = 255;
-    const first = data[p * spp];
-    if (nodata != null && first === nodata) alpha = 0;
-    if (spp >= 3) {
-      img.data[o] = norm(data[p * spp], 0);
-      img.data[o + 1] = norm(data[p * spp + 1], 1);
-      img.data[o + 2] = norm(data[p * spp + 2], 2);
-      img.data[o + 3] = spp >= 4 ? data[p * spp + 3] : alpha;
-    } else {
-      const v = norm(first, 0);
-      img.data[o] = v;
-      img.data[o + 1] = v;
-      img.data[o + 2] = v;
-      img.data[o + 3] = alpha;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-
-  const rectangle = Cesium.Rectangle.fromDegrees(west, south, east, north);
-  const provider = await Cesium.SingleTileImageryProvider.fromUrl(
-    canvas.toDataURL("image/png"),
-    { rectangle }
-  );
-  const imageryLayer = new Cesium.ImageryLayer(provider);
+  const sizeStr = w ? `${w.toLocaleString()}×${h.toLocaleString()}px · ` : "";
+  const pyramidStr =
+    levels > 1
+      ? `${levels} levels · tiled COG`
+      : "no overviews — add a pyramid (gdaladdo) for best zoom";
 
   return {
     kind: "raster",
     format: "geotiff",
     name: file.name,
-    note: `${w}×${h}px${spp >= 3 ? " RGB" : " single-band"}`,
+    note: `${sizeStr}${pyramidStr}`,
+    imageryLayer,
+    rectangle,
+  };
+}
+
+/**
+ * Load a Cloud-Optimized GeoTIFF straight from a URL — the provider issues HTTP
+ * range requests and pulls only the tiles it needs, so a 4 GB COG never has to
+ * be downloaded in full. Great for trying public COGs. The host MUST allow CORS.
+ */
+export async function ingestCogUrl(url: string): Promise<IngestResult> {
+  // read the header (IFD count = full-res image + overview levels) so the panel
+  // can show whether this is a real COG (has overviews) or a plain TIFF.
+  let levels = 0;
+  try {
+    const tiff = await fromUrl(url);
+    levels = await tiff.getImageCount();
+  } catch {
+    // non-fatal — provider below re-reads the file
+  }
+  let provider: TIFFImageryProvider;
+  try {
+    provider = await TIFFImageryProvider.fromUrl(url, {
+      projFunc: cogProjFunc,
+      // smooth (bilinear) resampling + larger tiles to match QGIS quality;
+      // the provider otherwise defaults to blocky nearest-neighbour.
+      tileSize: 512,
+      renderOptions: { resampleMethod: "bilinear" },
+    });
+  } catch (err) {
+    throw new Error(
+      `Couldn't load COG from URL — ${
+        err instanceof Error ? err.message : String(err)
+      }. The host must allow CORS and the file should be a Cloud-Optimized GeoTIFF.`
+    );
+  }
+  // The provider's bundled typings union ImageData into requestImage()'s return,
+  // which Cesium's ImageryProvider type doesn't list — a types-only mismatch
+  // (runtime is a valid Cesium imagery provider), so cast across it.
+  const cesiumProvider = provider as unknown as Cesium.ImageryProvider;
+  const imageryLayer = new Cesium.ImageryLayer(cesiumProvider);
+  const rectangle = cesiumProvider.rectangle
+    ? Cesium.Rectangle.clone(cesiumProvider.rectangle)
+    : undefined;
+  let name = "remote COG";
+  try {
+    name = decodeURIComponent(url.split("?")[0].split("/").pop() || name);
+  } catch {
+    /* keep default */
+  }
+  const note =
+    levels > 1
+      ? `${levels} levels · tiled COG ✓`
+      : levels === 1
+        ? "plain TIFF · NO overviews ✗"
+        : "streamed · range requests";
+  return {
+    kind: "raster",
+    format: "geotiff",
+    name,
+    note,
     imageryLayer,
     rectangle,
   };

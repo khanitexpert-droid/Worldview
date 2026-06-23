@@ -28,7 +28,12 @@ import { EventFx } from "@/lib/eventFx";
 import { MapLabels } from "@/lib/mapLabels";
 import { MeasureTool, HighlightTool } from "@/lib/globeTools";
 import { loadBorders } from "@/lib/borders";
-import { ingestFile, applyVectorStyle, formatFromName } from "@/lib/userData";
+import {
+  ingestFile,
+  ingestCogUrl,
+  applyVectorStyle,
+  formatFromName,
+} from "@/lib/userData";
 
 import TopBar from "./hud/TopBar";
 import Controls from "./hud/Controls";
@@ -299,6 +304,10 @@ function renderLayer(
   if (id === "fires") {
     for (const f of items as import("@/lib/types").Fire[]) {
       const eid = `fires:${f.id}`;
+      // FIRMS occasionally emits two detections that round to the same
+      // lat,lon,time id; EntityCollection.add throws on a duplicate id, which
+      // would crash the whole globe — so skip repeats.
+      if (ds.entities.getById(eid)) continue;
       const size = fireSize(f.frp);
       ds.entities.add({
         id: eid,
@@ -507,6 +516,51 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
             "alert"
           );
         }
+      }
+    },
+    [pushIntel, addUserLayer, zoomToUserLayer]
+  );
+
+  // load a Cloud-Optimized GeoTIFF from a URL (range-streamed, no full download)
+  const addCogUrl = useCallback(
+    async (url: string) => {
+      const viewer = viewerRef.current;
+      const u = url.trim();
+      if (!viewer || !u) return;
+      const id = `user-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 7)}`;
+      const color =
+        USER_LAYER_COLORS[userColorIdxRef.current++ % USER_LAYER_COLORS.length];
+      pushIntel(`STREAMING COG · ${u.split("/").pop()}…`, "info");
+      try {
+        const res = await ingestCogUrl(u);
+        if (res.imageryLayer) viewer.imageryLayers.add(res.imageryLayer);
+        userLayerObjsRef.current.set(id, {
+          imageryLayer: res.imageryLayer,
+          rectangle: res.rectangle,
+          appliedColor: color,
+          appliedOpacity: 1,
+        });
+        addUserLayer({
+          id,
+          name: res.name,
+          kind: res.kind,
+          format: res.format,
+          visible: true,
+          opacity: 1,
+          color,
+          note: res.note,
+        });
+        pushIntel(`COG ONLINE · ${res.name}`, "ok");
+        useWorldView.getState().setRightPanel("userdata");
+        setTimeout(() => zoomToUserLayer(id), 200);
+      } catch (err) {
+        console.warn("[worldview] COG url load failed", err);
+        pushIntel(
+          `COG FAILED · ${err instanceof Error ? err.message : String(err)}`,
+          "alert"
+        );
       }
     },
     [pushIntel, addUserLayer, zoomToUserLayer]
@@ -814,6 +868,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
         measure: measureToolRef.current,
         highlight: highlightToolRef.current,
       };
+      (
+        window as unknown as { __wvAddCogUrl?: (u: string) => void }
+      ).__wvAddCogUrl = addCogUrl;
     }
 
     return () => {
@@ -1580,6 +1637,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       <RightRail
         onFlyTo={flyTo}
         onAddFiles={addFiles}
+        onAddCogUrl={addCogUrl}
         onZoomLayer={zoomToUserLayer}
         onScreenshot={takeScreenshot}
         onClearMeasure={clearMeasure}

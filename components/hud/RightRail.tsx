@@ -25,6 +25,7 @@ const TABS: Tab[] = [
 export default function RightRail({
   onFlyTo,
   onAddFiles,
+  onAddCogUrl,
   onZoomLayer,
   onScreenshot,
   onClearMeasure,
@@ -32,6 +33,7 @@ export default function RightRail({
 }: {
   onFlyTo: (lon: number, lat: number, h?: number) => void;
   onAddFiles: (files: File[]) => void;
+  onAddCogUrl: (url: string) => void;
   onZoomLayer: (id: string) => void;
   onScreenshot: () => void;
   onClearMeasure: () => void;
@@ -114,7 +116,11 @@ export default function RightRail({
             {active.id === "intel" && <IntelBody />}
             {active.id === "layers" && <LayersBody />}
             {active.id === "userdata" && (
-              <UserDataPanel onAddFiles={onAddFiles} onZoom={onZoomLayer} />
+              <UserDataPanel
+                onAddFiles={onAddFiles}
+                onAddCogUrl={onAddCogUrl}
+                onZoom={onZoomLayer}
+              />
             )}
             {active.id === "tools" && (
               <ToolsPanel

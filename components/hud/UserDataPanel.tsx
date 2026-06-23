@@ -1,18 +1,21 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useWorldView } from "@/lib/store";
 
 /**
  * MY DATA — imported GIS layers. Drop files anywhere on the globe (or browse
- * here) to add GeoJSON / Shapefile-zip / KML / GeoTIFF. Each row controls
- * visibility, color (vector), opacity, zoom-to, and remove.
+ * here) to add GeoJSON / Shapefile-zip / KML / GeoTIFF. A COG can also be loaded
+ * straight from a URL (range-streamed). Each row controls visibility, color
+ * (vector), opacity, zoom-to, and remove.
  */
 export default function UserDataPanel({
   onAddFiles,
+  onAddCogUrl,
   onZoom,
 }: {
   onAddFiles: (files: File[]) => void;
+  onAddCogUrl: (url: string) => void;
   onZoom: (id: string) => void;
 }) {
   const layers = useWorldView((s) => s.userLayers);
@@ -21,6 +24,7 @@ export default function UserDataPanel({
   const setOpacity = useWorldView((s) => s.setUserLayerOpacity);
   const setColor = useWorldView((s) => s.setUserLayerColor);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [cogUrl, setCogUrl] = useState("");
 
   return (
     <div className="p-2">
@@ -47,6 +51,32 @@ export default function UserDataPanel({
           e.target.value = "";
         }}
       />
+
+      {/* load a Cloud-Optimized GeoTIFF straight from a URL (range-streamed) */}
+      <form
+        className="mb-2 flex gap-1"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (cogUrl.trim()) {
+            onAddCogUrl(cogUrl);
+            setCogUrl("");
+          }
+        }}
+      >
+        <input
+          type="url"
+          value={cogUrl}
+          onChange={(e) => setCogUrl(e.target.value)}
+          placeholder="…or paste a COG URL (.tif)"
+          className="min-w-0 flex-1 border border-wv-border bg-transparent px-2 py-1.5 text-[10px] text-wv-text placeholder:text-wv-muted focus:border-wv-cyan focus:outline-none"
+        />
+        <button
+          type="submit"
+          className="shrink-0 border border-wv-border px-2 py-1.5 text-[10px] font-bold tracking-wider text-wv-text transition-colors hover:border-wv-cyan hover:text-wv-cyan hover:box-glow-cyan"
+        >
+          LOAD
+        </button>
+      </form>
 
       {layers.length === 0 ? (
         <p className="px-1 py-3 text-center text-[10px] leading-relaxed text-wv-muted">

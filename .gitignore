@@ -36,6 +36,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local-only demo/test rasters (kept out of the repo + OneDrive; the
+# originals live in C:\Users\usmaa\worldview-demo)
+/public/demo_*.tif
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
