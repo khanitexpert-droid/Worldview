@@ -8,7 +8,7 @@ export default function Controls({
   onLocate: () => void;
 }) {
   return (
-    <div className="fixed top-3 right-3 z-40 flex flex-col items-end gap-1.5">
+    <div className="flex items-center gap-1.5">
       <button
         onClick={onReset}
         className="hud-panel px-3 py-1.5 text-[10px] font-bold tracking-[0.18em] text-wv-text transition-colors hover:text-wv-magenta hover:box-glow-magenta"

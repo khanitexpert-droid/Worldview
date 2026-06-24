@@ -43,3 +43,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local-only data artifacts (the GitHub Action publishes these to the `data` branch)
+/events.json
+/activity.json

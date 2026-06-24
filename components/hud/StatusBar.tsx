@@ -13,6 +13,7 @@ export default function StatusBar() {
   const counts = useWorldView((s) => s.counts);
   const layers = useWorldView((s) => s.layers);
   const cursor = useWorldView((s) => s.cursor);
+  const sideOpen = useWorldView((s) => s.sideOpen);
 
   const total = LAYERS.reduce(
     (acc, l) => acc + (layers[l.id] ? counts[l.id] ?? 0 : 0),
@@ -20,7 +21,10 @@ export default function StatusBar() {
   );
 
   return (
-    <div className="hud-panel fixed bottom-3 left-[64px] z-40 flex items-center gap-4 px-3 py-1.5 text-[10px] tracking-wider">
+    <div
+      className="hud-panel fixed bottom-3 z-40 flex items-center gap-4 px-3 py-1.5 text-[10px] tracking-wider"
+      style={{ left: sideOpen ? 372 : 12 }}
+    >
       <span className="flex items-center gap-1.5 text-wv-cyan">
         <span className="wv-live-dot inline-block h-1.5 w-1.5 rounded-full bg-wv-cyan" />
         ALL SYSTEMS NOMINAL
@@ -40,7 +44,7 @@ export default function StatusBar() {
         </span>
       </span>
       <span className="text-wv-border">|</span>
-      <span className="text-wv-violet/80">WORLDVIEW v1.0.0</span>
+      <span className="text-wv-violet/80">v1.0.0</span>
     </div>
   );
 }

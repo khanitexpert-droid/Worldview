@@ -110,9 +110,9 @@ export default function SearchBar({
   };
 
   return (
-    <div ref={boxRef} className="fixed top-[88px] right-3 z-40 w-[168px]">
-      <div className="hud-panel corner-ticks flex items-center gap-2 px-2.5 py-1.5">
-        <span className="text-wv-cyan glow-cyan text-[13px] leading-none">⌕</span>
+    <div ref={boxRef} className="fixed right-3 top-[64px] z-40 w-[256px]">
+      <div className="flex items-center gap-1.5 rounded-md border border-wv-border bg-white/10 px-2 py-2 backdrop-blur-md">
+        <span className="text-wv-cyan glow-cyan text-[15px] leading-none">⌕</span>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -120,7 +120,7 @@ export default function SearchBar({
           onKeyDown={onKey}
           placeholder="SEARCH…"
           spellCheck={false}
-          className="w-full bg-transparent text-[11px] tracking-wide text-wv-text placeholder:text-wv-muted focus:outline-none"
+          className="w-full bg-transparent text-[12.5px] tracking-wide text-wv-text placeholder:text-wv-text/40 focus:outline-none"
         />
         {loading ? (
           <span className="text-[11px] text-wv-violet">···</span>
@@ -136,11 +136,13 @@ export default function SearchBar({
           >
             ✕
           </button>
-        ) : null}
+        ) : (
+          <span className="text-wv-cyan/70 text-[14px] leading-none">⌕</span>
+        )}
       </div>
 
       {open && results.length > 0 && (
-        <div className="wv-panel-in hud-panel wv-scroll mt-1 max-h-64 overflow-y-auto">
+        <div className="wv-panel-in hud-panel wv-scroll absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto">
           {results.map((r, i) => (
             <button
               key={`${r.lat},${r.lon},${i}`}
@@ -172,7 +174,7 @@ export default function SearchBar({
       )}
 
       {open && !loading && results.length === 0 && q.trim().length >= 2 && (
-        <div className="hud-panel mt-1 px-2.5 py-2 text-[10px] tracking-wide text-wv-muted">
+        <div className="hud-panel absolute left-0 right-0 top-full z-50 mt-1 px-2.5 py-2 text-[10px] tracking-wide text-wv-muted">
           NO MATCHES
         </div>
       )}

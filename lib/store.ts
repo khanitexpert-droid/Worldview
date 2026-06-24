@@ -14,7 +14,10 @@ interface IntelLine {
 }
 
 /** which contextual side panel the right rail has open (null = collapsed) */
-export type RightPanel = "intel" | "selected" | "layers" | "userdata" | "tools";
+export type RightPanel = "intel" | "userdata" | "tools";
+
+/** which content tab the left side panel (deltasweep-style) is showing */
+export type SideTab = "caspian" | "activity" | "news" | "markets" | "missiles";
 
 /** open-data provenance + freshness for the SATELLITES panel */
 export interface SatMeta {
@@ -37,6 +40,16 @@ interface WorldViewState {
   rightPanel: RightPanel | null;
   toggleRightPanel: (p: RightPanel) => void;
   setRightPanel: (p: RightPanel | null) => void;
+
+  // ---- left side panel (deltasweep-style intel tabs) ----
+  sideTab: SideTab;
+  setSideTab: (t: SideTab) => void;
+  sideOpen: boolean;
+  toggleSide: () => void;
+  setSideOpen: (v: boolean) => void;
+  // which missile range rings are shown on the globe (per-missile, by id)
+  missileRingIds: string[];
+  toggleMissileRing: (id: string) => void;
 
   counts: Record<LayerId, number>;
   setCount: (id: LayerId, n: number) => void;
@@ -90,19 +103,28 @@ export const useWorldView = create<WorldViewState>((set) => ({
     set((s) => ({ layers: { ...s.layers, [id]: !s.layers[id] } })),
 
   selected: null,
-  // picking an entity on the globe auto-opens the SELECTED panel; clearing the
-  // selection leaves whatever panel is open (the body shows an empty state).
-  setSelected: (e) =>
-    set((s) => ({
-      selected: e,
-      rightPanel: e ? "selected" : s.rightPanel,
-    })),
+  // picking an entity on the globe shows the compact SelectedPopup (driven by
+  // `selected`); the right-side overlay panels are unaffected.
+  setSelected: (e) => set({ selected: e }),
   updateSelected: (e) => set({ selected: e }),
 
   rightPanel: null,
   toggleRightPanel: (p) =>
     set((s) => ({ rightPanel: s.rightPanel === p ? null : p })),
   setRightPanel: (p) => set({ rightPanel: p }),
+
+  sideTab: "markets",
+  setSideTab: (t) => set({ sideTab: t }),
+  sideOpen: true,
+  toggleSide: () => set((s) => ({ sideOpen: !s.sideOpen })),
+  setSideOpen: (v) => set({ sideOpen: v }),
+  missileRingIds: [],
+  toggleMissileRing: (id) =>
+    set((s) => ({
+      missileRingIds: s.missileRingIds.includes(id)
+        ? s.missileRingIds.filter((x) => x !== id)
+        : [...s.missileRingIds, id],
+    })),
 
   counts: initialCounts,
   setCount: (id, n) => set((s) => ({ counts: { ...s.counts, [id]: n } })),

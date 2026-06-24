@@ -28,6 +28,7 @@ import { EventFx } from "@/lib/eventFx";
 import { MapLabels } from "@/lib/mapLabels";
 import { MeasureTool, HighlightTool } from "@/lib/globeTools";
 import { loadBorders } from "@/lib/borders";
+import { MISSILES, MISSILE_OPERATORS } from "@/lib/missiles";
 import {
   ingestFile,
   ingestCogUrl,
@@ -36,10 +37,12 @@ import {
 } from "@/lib/userData";
 
 import TopBar from "./hud/TopBar";
-import Controls from "./hud/Controls";
 import StatusBar from "./hud/StatusBar";
-import RightRail from "./hud/RightRail";
+import SidePanel from "./hud/SidePanel";
+import RightPanels from "./hud/RightPanels";
+import BrandBadge from "./hud/BrandBadge";
 import SearchBar from "./hud/SearchBar";
+import SelectedPopup from "./hud/SelectedPopup";
 
 // ---- palette ----
 const C = {
@@ -169,6 +172,33 @@ const FETCHERS: Record<
 const STATIC_LAYERS = (Object.keys(FETCHERS) as PollLayerId[]).filter(
   (id) => id !== "flights" && id !== "ships"
 );
+
+// Build a geodesic circle as a list of surface positions. We render missile
+// range rings as POLYLINES (not ellipse outlines) because Cesium caps ellipse
+// outlineWidth at 1px on Windows/ANGLE — polylines support real thickness.
+function geodesicCircle(
+  lon: number,
+  lat: number,
+  radiusM: number
+): Cesium.Cartesian3[] {
+  const geom = Cesium.EllipseOutlineGeometry.createGeometry(
+    new Cesium.EllipseOutlineGeometry({
+      center: Cesium.Cartesian3.fromDegrees(lon, lat),
+      semiMajorAxis: radiusM,
+      semiMinorAxis: radiusM,
+      granularity: Cesium.Math.toRadians(1),
+      numberOfVerticalLines: 0,
+    })
+  );
+  const out: Cesium.Cartesian3[] = [];
+  const v = geom?.attributes?.position?.values;
+  if (!v) return out;
+  for (let i = 0; i < v.length; i += 3) {
+    out.push(new Cesium.Cartesian3(v[i], v[i + 1], v[i + 2]));
+  }
+  if (out.length) out.push(out[0].clone()); // close the loop
+  return out;
+}
 
 function quakeColor(mag: number): Cesium.Color {
   if (mag >= 6) return C.red;
@@ -393,6 +423,8 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const highlightToolRef = useRef<HighlightTool | null>(null);
   // ---- world country borders (GeoJSON) ----
   const bordersDsRef = useRef<Cesium.CustomDataSource | null>(null);
+  // ---- missile range rings (shown while the MISSILES side tab is active) ----
+  const missilesDsRef = useRef<Cesium.CustomDataSource | null>(null);
   // ---- Google Photorealistic 3D Tiles (lazy-created scene primitive) ----
   const tilesetRef = useRef<Cesium.Cesium3DTileset | null>(null);
   const photorealLoadingRef = useRef(false);
@@ -425,6 +457,8 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   });
 
   const layers = useWorldView((s) => s.layers);
+  const sideTab = useWorldView((s) => s.sideTab);
+  const missileRingIds = useWorldView((s) => s.missileRingIds);
   const photoreal = useWorldView((s) => s.layers.photoreal);
   const userLayers = useWorldView((s) => s.userLayers);
   const addUserLayer = useWorldView((s) => s.addUserLayer);
@@ -695,6 +729,11 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     const shipDs = new Cesium.CustomDataSource("ships-live");
     viewer.dataSources.add(shipDs);
     shipDsRef.current = shipDs;
+
+    // dedicated datasource for missile range rings
+    const missilesDs = new Cesium.CustomDataSource("missiles");
+    viewer.dataSources.add(missilesDs);
+    missilesDsRef.current = missilesDs;
 
     // satellite swarm — manages its own PointPrimitiveCollection + preRender loop
     satFieldRef.current = new SatelliteField(scene);
@@ -1381,6 +1420,33 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     eventFxRef.current?.setVisible(layers.events);
   }, [ready, layers.events]);
 
+  // ---- missile range rings: drawn only while the MISSILES side tab is active.
+  // Each ring is a geodesic circle centered on the operator's origin, radius =
+  // the missile's range, colored by operator (retired systems omitted). ----
+  useEffect(() => {
+    const ds = missilesDsRef.current;
+    if (!ds || !ready) return;
+    ds.entities.removeAll();
+    for (const id of missileRingIds) {
+      const m = MISSILES.find((x) => x.id === id);
+      if (!m) continue;
+      const op = MISSILE_OPERATORS[m.operator];
+      if (!op) continue;
+      const color = Cesium.Color.fromCssColorString(op.color);
+      const positions = geodesicCircle(op.origin[0], op.origin[1], m.rangeKm * 1000);
+      if (positions.length < 2) continue;
+      ds.entities.add({
+        id: `missile:${m.id}`,
+        polyline: {
+          positions,
+          width: 3,
+          material: color,
+          arcType: Cesium.ArcType.NONE,
+        },
+      });
+    }
+  }, [ready, missileRingIds]);
+
   // ---- world events: stream headlines to intel + drive the breaking-news radar ----
   useEffect(() => {
     if (!ready || !layers.events) return;
@@ -1630,12 +1696,13 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   return (
     <div className="relative h-full w-full overflow-hidden">
       <div ref={containerRef} className="absolute inset-0" />
-      <TopBar />
+      <TopBar onReset={resetView} onLocate={locateMe} />
       <SearchBar onFlyTo={flyTo} onFlyToRect={flyToRect} />
-      <Controls onReset={resetView} onLocate={locateMe} />
+      <SidePanel onFlyTo={flyTo} />
+      <SelectedPopup onFlyTo={flyTo} />
       <StatusBar />
-      <RightRail
-        onFlyTo={flyTo}
+      <BrandBadge />
+      <RightPanels
         onAddFiles={addFiles}
         onAddCogUrl={addCogUrl}
         onZoomLayer={zoomToUserLayer}

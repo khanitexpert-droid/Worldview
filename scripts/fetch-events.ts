@@ -4,6 +4,7 @@
 // for the app to read. (Reuses the shared parse/aggregate logic in lib/gdelt.)
 import { writeFileSync } from "node:fs";
 import { aggregate, buildDocUrl, QUERIES, type GdeltArticle } from "../lib/gdelt";
+import { ACTIVITY_QUERY, classifyActivity } from "../lib/activity";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,6 +46,24 @@ async function main() {
   const payload = { items, source: "gdelt", fetchedAt: new Date().toISOString() };
   writeFileSync("events.json", JSON.stringify(payload));
   console.log(`WROTE events.json: ${items.length} countries from ${merged.size} articles`);
+
+  // ---- ACTIVITY feed: a dedicated conflict query, classified into categories.
+  // Falls back to classifying the already-merged articles if the extra query
+  // fails, so activity.json is ALWAYS written (the publish step copies it).
+  let conflict: GdeltArticle[] = [];
+  await sleep(5500); // stay under GDELT's 1-request/5s limit
+  try {
+    conflict = await fetchOne(ACTIVITY_QUERY);
+    console.log(`activity query ok — ${conflict.length} conflict articles`);
+  } catch (e) {
+    console.log(`activity query FAILED: ${String(e)} — classifying merged set`);
+  }
+  const activity = classifyActivity([...conflict, ...merged.values()]);
+  writeFileSync(
+    "activity.json",
+    JSON.stringify({ items: activity, source: "gdelt", fetchedAt: new Date().toISOString() })
+  );
+  console.log(`WROTE activity.json: ${activity.length} classified events`);
 }
 
 main().catch((e) => {

@@ -14,8 +14,8 @@
   --wv-violet: #b14bff; /* tertiary */
   --wv-amber: #ffb347; /* warning */
   --wv-red: #ff414e; /* alert */
-  --wv-text: #e8d9ff; /* body */
-  --wv-muted: #6c5b8c; /* secondary text */
+  --wv-text: #f1e9ff; /* body */
+  --wv-muted: #bcb0db; /* secondary text (brightened for legibility) */
   --wv-border: #2a1840; /* panel border */
 }
 
@@ -114,7 +114,7 @@ body {
     rgba(0, 0, 0, 0) 4px
   );
   mix-blend-mode: multiply;
-  opacity: 0.5;
+  opacity: 0.15;
 }
 .vignette::after {
   content: "";
@@ -122,7 +122,7 @@ body {
   inset: 0;
   pointer-events: none;
   z-index: 199;
-  background: radial-gradient(ellipse at center, transparent 55%, rgba(11, 6, 18, 0.65) 100%);
+  background: radial-gradient(ellipse at center, transparent 68%, rgba(11, 6, 18, 0.28) 100%);
 }
 
 /* ---------- blinking cursor ---------- */

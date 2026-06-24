@@ -146,6 +146,97 @@ export interface Fire {
   acq: number; // epoch ms of the detection (acq_date + acq_time)
 }
 
+/**
+ * A single tradable instrument for the MARKETS panel (deltasweep-style ticker
+ * board, cleaner layout). Quoted via Yahoo Finance's public chart endpoint — no
+ * API key. HUD-only (not plotted on the globe), so intentionally NOT part of
+ * LayerId / FeedEntity.
+ */
+export interface MarketQuote {
+  symbol: string; // Yahoo symbol, e.g. "CL=F"
+  label: string; // display name, e.g. "Crude Oil · WTI"
+  group: string; // section header, e.g. "ENERGY"
+  price: number;
+  changePct: number; // % vs previous close
+  spark: number[]; // downsampled intraday closes for the sparkline
+}
+
+/**
+ * A prediction-market line for the NEWS tab. Real-money odds via Kalshi's public
+ * events API (no key). For a multi-outcome event we surface the leading outcome.
+ */
+export interface PredictionMarket {
+  id: string; // Kalshi event ticker (stable key)
+  title: string; // the event question
+  outcome?: string; // leading outcome label (multi-outcome events only)
+  prob: number; // 0..1 YES probability of the shown market
+  volume: number; // traded contract volume (activity proxy)
+  category: string; // Kalshi category, e.g. "Politics"
+}
+
+/**
+ * A missile in the MISSILES reference catalog. Curated open-source specs (not a
+ * live feed) — operator arsenals with class, range, payload, status. The globe
+ * draws a range ring per missile, centered on its operator's origin.
+ */
+export interface MissileSpec {
+  id: string;
+  name: string;
+  operator: string; // "Iran" | "Israel" (extensible)
+  category: string; // "Cruise" | "SRBM" | "IRBM" | "ICBM" | "Loitering" …
+  rangeKm: number;
+  payloadKg?: number;
+  status: "OPERATIONAL" | "RETIRED" | "REPORTED" | "DEVELOPMENT";
+  note?: string;
+}
+
+/** ACTIVITY conflict categories (deltasweep parity). */
+export type ActivityCategory =
+  | "STRIKE"
+  | "AIR"
+  | "NAVAL"
+  | "GROUND"
+  | "EXPLOSION"
+  | "DIPLOMATIC";
+
+/**
+ * One OSINT conflict/incident for the ACTIVITY feed. Derived from GDELT conflict
+ * coverage (theme:ARMEDCONFLICT/TERROR), classified into a category + a
+ * keyword-heuristic severity. HUD-only (not a globe layer).
+ */
+export interface ActivityEvent {
+  id: string; // article url (stable de-dupe key)
+  category: ActivityCategory;
+  severity: "LOW" | "MEDIUM" | "HIGH"; // keyword heuristic (not curated)
+  title: string;
+  url: string;
+  domain: string; // reporting outlet
+  time: number; // epoch ms (GDELT seendate)
+}
+
+/**
+ * A geopolitical report card for the CASPIAN feed — aggregated from free
+ * world/geopolitics RSS (Al Jazeera, France 24, DW, The Guardian). Richer than a
+ * bare headline: carries a short summary, like deltasweep's report feed.
+ */
+export interface CaspianReport {
+  id: string;
+  title: string;
+  url: string;
+  source: string; // outlet, e.g. "Al Jazeera"
+  time: number; // epoch ms (parsed from pubDate / dc:date)
+  summary: string; // short plain-text summary (HTML-stripped RSS description)
+}
+
+/** A financial headline for the MARKETS tab's FIN NEWS feed (free CNBC RSS). */
+export interface FinHeadline {
+  id: string; // RSS guid (stable de-dupe key)
+  title: string;
+  url: string;
+  source: string; // CNBC desk: "MARKETS" | "FINANCE" | "BUSINESS"
+  time: number; // epoch ms (parsed from pubDate)
+}
+
 export type FeedEntity =
   | ({ kind: "flights" } & Flight)
   | ({ kind: "satellites" } & Satellite)
