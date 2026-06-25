@@ -20,6 +20,7 @@ export default function LayerCategories() {
   const layers = useWorldView((s) => s.layers);
   const counts = useWorldView((s) => s.counts);
   const toggleLayer = useWorldView((s) => s.toggleLayer);
+  const selected = useWorldView((s) => s.selected);
   const [open, setOpen] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -31,6 +32,13 @@ export default function LayerCategories() {
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
+
+  // picking a globe marker selects an entity → close any open category dropdown
+  // (deltasweep behavior: the menu gets out of the way of the detail popup). Only
+  // fires on a new selection, so reopening the menu later keeps the selection.
+  useEffect(() => {
+    if (selected) setOpen(null);
+  }, [selected]);
 
   return (
     <div ref={ref} className="flex items-center gap-1">

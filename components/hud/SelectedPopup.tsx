@@ -22,9 +22,9 @@ export default function SelectedPopup({
 
   return (
     <div
-      className="wv-panel-in hud-panel corner-ticks fixed top-16 z-[45] flex max-h-[78vh] w-[296px] flex-col"
-      // right-3 (12px) edge; when a right panel (w-80 = 320px) is open, sit just
-      // to its left so the two never overlap.
+      className="wv-panel-in hud-panel corner-ticks fixed bottom-12 z-[45] flex max-h-[72vh] w-[300px] flex-col"
+      // bottom-right corner (deltasweep-style), above the status bar; when a right
+      // panel (w-80 = 320px) is open, sit just to its left so they never overlap.
       style={{ right: rightPanel ? 344 : 12 }}
     >
       <button
