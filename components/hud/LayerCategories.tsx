@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useWorldView } from "@/lib/store";
 import { LAYERS } from "@/lib/layers";
 
 // Layer categories (deltasweep-style). Each opens a dropdown of toggleable
-// layers. Driven by each layer's `group` in lib/layers.ts.
+// layers. Driven by each layer's `group` in lib/layers.ts. A layer may also set
+// a `subgroup` (e.g. INFRA → ENERGY / CIVILIAN) which prints a sub-header inside
+// the dropdown.
 const CATS: { id: string; color: string }[] = [
   { id: "AIR", color: "#00e5ff" },
   { id: "SEA", color: "#4aa3ff" },
   { id: "GROUND", color: "#ffb347" },
+  { id: "INFRA", color: "#f5a623" },
   { id: "IMAGERY", color: "#5dff9e" },
 ];
 
@@ -57,15 +60,24 @@ export default function LayerCategories() {
             </button>
 
             {isOpen && (
-              <div className="wv-panel-in hud-panel absolute left-0 top-full z-50 mt-1 w-56 py-1">
+              <div className="wv-panel-in hud-panel wv-scroll absolute left-0 top-full z-50 mt-1 max-h-[72vh] w-56 overflow-y-auto py-1">
                 <div className="px-3 pb-1 pt-1 text-[9px] font-bold tracking-[0.2em] text-wv-muted">
                   {cat.id} · {active}/{items.length} ACTIVE
                 </div>
-                {items.map((l) => {
-                  const on = layers[l.id];
-                  return (
+                {(() => {
+                  let lastSub: string | undefined;
+                  return items.map((l) => {
+                    const on = layers[l.id];
+                    const showSub = !!l.subgroup && l.subgroup !== lastSub;
+                    lastSub = l.subgroup;
+                    return (
+                      <Fragment key={l.id}>
+                        {showSub && (
+                          <div className="px-3 pb-0.5 pt-2 text-[8px] font-bold tracking-[0.22em] text-wv-muted/70">
+                            {l.subgroup}
+                          </div>
+                        )}
                     <button
-                      key={l.id}
                       onClick={() => toggleLayer(l.id)}
                       title={l.info}
                       className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors ${
@@ -100,8 +112,10 @@ export default function LayerCategories() {
                         {l.noCount ? (on ? "ON" : "—") : on ? counts[l.id] ?? 0 : "—"}
                       </span>
                     </button>
-                  );
-                })}
+                      </Fragment>
+                    );
+                  });
+                })()}
               </div>
             )}
           </div>

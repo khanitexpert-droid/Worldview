@@ -11,7 +11,31 @@ export type LayerId =
   | "photoreal"
   | "bathymetry"
   | "navyShips"
-  | "shippingRoutes";
+  | "shippingRoutes"
+  // ---- INFRA group (deltasweep parity) ----
+  | InfraPointKind
+  | InfraLineKind
+  | "gdp";
+
+/**
+ * INFRA point layers — every one is a fixed geolocated site, so they all share
+ * the generic `InfraSite` shape (below) and only differ by category color/icon.
+ * ENERGY: lng / nuclear / oilgas / refineries. CIVILIAN: airports / minerals /
+ * datacenters / desal / ports.
+ */
+export type InfraPointKind =
+  | "lng"
+  | "nuclear"
+  | "oilgas"
+  | "refineries"
+  | "airports"
+  | "minerals"
+  | "datacenters"
+  | "desal"
+  | "ports";
+
+/** INFRA line layers — drawn as polylines (routes), not points. */
+export type InfraLineKind = "pipelines" | "cables";
 
 /** A user-imported GIS layer (drag-dropped GeoJSON / Shapefile / KML / GeoTIFF). */
 export interface UserLayer {
@@ -266,6 +290,52 @@ export interface NavyShip {
   wiki?: string; // Wikipedia page title (used to pull a photo in the detail card)
 }
 
+/**
+ * A fixed infrastructure site — the shared shape for all 9 INFRA *point* layers
+ * (LNG, nuclear, oil & gas, refineries, airports, minerals, data centers,
+ * desalination, ports). Only a name + position are required; the rest are
+ * optional descriptive fields the detail card prints when present, so one shape
+ * covers every category. Real/curated open data (OSM, OurAirports, NGA, OSINT).
+ */
+export interface InfraSite {
+  id: string;
+  name: string;
+  lon: number;
+  lat: number;
+  country?: string;
+  status?: string; // "Operating" | "Existing" | "Construction" | "Planned" …
+  operator?: string;
+  stype?: string; // sub-type label, e.g. "Import Terminal" / "fuel cycle" / "Major Hub"
+  capacity?: string; // free-form, e.g. "75 MW" / "1.2 Mtpa" / "320k bpd"
+  code?: string; // identifier, e.g. IATA/ICAO / UN-LOCODE / commodity
+  note?: string; // one-line description shown in the card footer
+}
+
+/** A routed infrastructure line — pipelines and submarine cables (polylines). */
+export interface InfraLine {
+  id: string;
+  name: string;
+  lon: number; // representative midpoint (for the detail card / fly-to)
+  lat: number;
+  paths: number[][][]; // MultiLineString: array of [ [lon,lat], … ] segments
+  status?: string;
+  operator?: string;
+  length?: string; // free-form, e.g. "1,200 km"
+  code?: string;
+  note?: string;
+  country?: string;
+}
+
+/** One country's GDP-per-capita value for the choropleth layer. */
+export interface GdpDatum {
+  id: string; // ISO-A3
+  name: string; // country name
+  lon: number; // country centroid (for fly-to / detail)
+  lat: number;
+  value: number; // GDP per capita, current US$
+  year?: number;
+}
+
 export type FeedEntity =
   | ({ kind: "flights" } & Flight)
   | ({ kind: "satellites" } & Satellite)
@@ -274,4 +344,8 @@ export type FeedEntity =
   | ({ kind: "bases" } & MilitaryBase)
   | ({ kind: "navyShips" } & NavyShip)
   | ({ kind: "fires" } & Fire)
-  | ({ kind: "events" } & WorldEvent);
+  | ({ kind: "events" } & WorldEvent)
+  // ---- INFRA ----
+  | ({ kind: InfraPointKind } & InfraSite)
+  | ({ kind: InfraLineKind } & InfraLine)
+  | ({ kind: "gdp" } & GdpDatum);

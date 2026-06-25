@@ -6,6 +6,9 @@ import type {
   Ship,
   SatelliteTle,
   WorldEvent,
+  InfraSite,
+  InfraLine,
+  GdpDatum,
 } from "./types";
 
 export interface SatellitesResponse {
@@ -49,3 +52,37 @@ export const fetchNavyShips = async () => ({
 // endpoint is unreliable and per-IP rate limits bite visitors.
 export const fetchEvents = () =>
   getJSON<{ items: WorldEvent[]; source?: string }>("/api/events");
+
+// ---- INFRA layers ----
+// All INFRA datasets are bundled static snapshots in /public (sites/routes don't
+// move), baked by the scripts/fetch-infra-*.mjs scripts. This loader is
+// resilient: a layer whose data file hasn't been generated yet returns empty
+// rather than throwing (so toggling it never crashes the globe).
+async function staticInfra<T>(url: string, source: string) {
+  try {
+    return { items: await getJSON<T[]>(url), source };
+  } catch {
+    return { items: [] as T[], source };
+  }
+}
+export const fetchLng = () => staticInfra<InfraSite>("/infra_lng.json", "OPENSTREETMAP");
+export const fetchNuclear = () =>
+  staticInfra<InfraSite>("/infra_nuclear.json", "CURATED · OSINT");
+export const fetchOilGas = () =>
+  staticInfra<InfraSite>("/infra_oilgas.json", "OPENSTREETMAP");
+export const fetchRefineries = () =>
+  staticInfra<InfraSite>("/infra_refineries.json", "OPENSTREETMAP");
+export const fetchAirports = () =>
+  staticInfra<InfraSite>("/infra_airports.json", "OURAIRPORTS");
+export const fetchMinerals = () =>
+  staticInfra<InfraSite>("/infra_minerals.json", "USGS / OSM");
+export const fetchDataCenters = () =>
+  staticInfra<InfraSite>("/infra_datacenters.json", "OPENSTREETMAP");
+export const fetchDesal = () =>
+  staticInfra<InfraSite>("/infra_desal.json", "OPENSTREETMAP");
+export const fetchPorts = () => staticInfra<InfraSite>("/infra_ports.json", "NGA WPI");
+export const fetchPipelines = () =>
+  staticInfra<InfraLine>("/infra_pipelines.json", "OPENSTREETMAP");
+export const fetchCables = () =>
+  staticInfra<InfraLine>("/infra_cables.json", "TELEGEOGRAPHY");
+export const fetchGdp = () => staticInfra<GdpDatum>("/infra_gdp.json", "WORLD BANK");

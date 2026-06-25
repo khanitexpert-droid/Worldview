@@ -47,3 +47,9 @@ next-env.d.ts
 # local-only data artifacts (the GitHub Action publishes these to the `data` branch)
 /events.json
 /activity.json
+
+# raw Global Energy Monitor source files (build-time inputs incl. a ~190 MB zip;
+# the parsed public/infra_*.json outputs are what get committed). Ignore the whole
+# drop folder except its README.
+/gem-data/*
+!/gem-data/README.md

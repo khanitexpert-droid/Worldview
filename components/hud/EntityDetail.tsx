@@ -296,6 +296,53 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
           ["BASIS", "MEDIA ORIGIN"],
         ],
       };
+    // ---- INFRA point sites (all 9 share the InfraSite shape) ----
+    case "lng":
+    case "nuclear":
+    case "oilgas":
+    case "refineries":
+    case "airports":
+    case "minerals":
+    case "datacenters":
+    case "desal":
+    case "ports": {
+      const rows: [string, React.ReactNode][] = [];
+      if (e.country) {
+        const fl = countryFlag(e.country);
+        rows.push([
+          "COUNTRY",
+          <span>
+            {fl && <span className="mr-1">{fl.emoji}</span>}
+            {e.country}
+          </span>,
+        ]);
+      }
+      if (e.status) rows.push(["STATUS", e.status]);
+      if (e.operator) rows.push(["OPERATOR", e.operator]);
+      if (e.stype) rows.push(["TYPE", e.stype]);
+      if (e.capacity) rows.push(["CAPACITY", e.capacity]);
+      if (e.code) rows.push(["CODE", e.code]);
+      return { title: e.name, rows };
+    }
+    // ---- INFRA routes (pipelines / submarine cables share InfraLine) ----
+    case "pipelines":
+    case "cables": {
+      const rows: [string, React.ReactNode][] = [];
+      if (e.operator) rows.push(["OPERATOR", e.operator]);
+      if (e.status) rows.push(["STATUS", e.status]);
+      if (e.length) rows.push(["LENGTH", e.length]);
+      if (e.country) rows.push(["REGION", e.country]);
+      if (e.code) rows.push(["ID", e.code]);
+      return { title: e.name, rows };
+    }
+    case "gdp": {
+      const rows: [string, React.ReactNode][] = [
+        ["GDP / CAPITA", `$${Math.round(e.value).toLocaleString()}`],
+      ];
+      if (e.year) rows.push(["YEAR", String(e.year)]);
+      rows.push(["BASIS", "WORLD BANK"]);
+      return { title: e.name, rows };
+    }
   }
 }
 
@@ -377,6 +424,19 @@ export default function EntityBody({
             value={`${e.lat.toFixed(3)}, ${e.lon.toFixed(3)}`}
           />
         </div>
+
+        {/* INFRA: optional description blurb + data provenance */}
+        {meta.group === "INFRA" && (
+          <>
+            {"note" in selected &&
+              (selected as { note?: string }).note && (
+                <p className="mt-2 text-[10px] leading-relaxed text-wv-text/75">
+                  {(selected as { note?: string }).note}
+                </p>
+              )}
+            <p className="mt-2 text-[9px] text-wv-muted">Source: {meta.source}</p>
+          </>
+        )}
 
         <button
           onClick={() =>

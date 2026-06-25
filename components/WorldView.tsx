@@ -6,7 +6,7 @@ import "cesium/Build/Cesium/Widgets/widgets.css";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorldView } from "@/lib/store";
-import { LAYERS } from "@/lib/layers";
+import { LAYERS, LAYER_BY_ID } from "@/lib/layers";
 import {
   fetchBases,
   fetchEarthquakes,
@@ -16,6 +16,18 @@ import {
   fetchShips,
   fetchSatellites,
   fetchNavyShips,
+  fetchLng,
+  fetchNuclear,
+  fetchOilGas,
+  fetchRefineries,
+  fetchAirports,
+  fetchMinerals,
+  fetchDataCenters,
+  fetchDesal,
+  fetchPorts,
+  fetchPipelines,
+  fetchCables,
+  fetchGdp,
 } from "@/lib/feeds";
 import type {
   Flight,
@@ -23,6 +35,11 @@ import type {
   FeedEntity,
   LayerId,
   WorldEvent,
+  InfraSite,
+  InfraLine,
+  GdpDatum,
+  InfraPointKind,
+  InfraLineKind,
 } from "@/lib/types";
 import { SatelliteField } from "@/lib/satField";
 import { EventFx } from "@/lib/eventFx";
@@ -163,6 +180,19 @@ const POLL_MS: Record<PollLayerId, number> = {
   events: 180000,
   // curated static vessels — effectively load-once (like bases)
   navyShips: 86_400_000,
+  // INFRA — all bundled static snapshots (sites/routes don't move), load-once.
+  lng: 86_400_000,
+  nuclear: 86_400_000,
+  oilgas: 86_400_000,
+  refineries: 86_400_000,
+  airports: 86_400_000,
+  minerals: 86_400_000,
+  datacenters: 86_400_000,
+  desal: 86_400_000,
+  ports: 86_400_000,
+  pipelines: 86_400_000,
+  cables: 86_400_000,
+  gdp: 86_400_000,
 };
 
 const FETCHERS: Record<
@@ -176,6 +206,18 @@ const FETCHERS: Record<
   fires: fetchFires,
   events: fetchEvents,
   navyShips: fetchNavyShips,
+  lng: fetchLng,
+  nuclear: fetchNuclear,
+  oilgas: fetchOilGas,
+  refineries: fetchRefineries,
+  airports: fetchAirports,
+  minerals: fetchMinerals,
+  datacenters: fetchDataCenters,
+  desal: fetchDesal,
+  ports: fetchPorts,
+  pipelines: fetchPipelines,
+  cables: fetchCables,
+  gdp: fetchGdp,
 };
 
 // layers handled by the generic (snap-on-poll) renderer — flights and ships are
@@ -277,6 +319,31 @@ function vesselColor(type: string): Cesium.Color {
 }
 
 type SelMap = Map<string, FeedEntity>;
+
+// INFRA layer kinds, split by how they render: fixed sites (points) vs routes
+// (polylines). GDP is handled separately (choropleth-style graduated bubbles).
+const INFRA_POINT_KINDS = new Set<LayerId>([
+  "lng",
+  "nuclear",
+  "oilgas",
+  "refineries",
+  "airports",
+  "minerals",
+  "datacenters",
+  "desal",
+  "ports",
+]);
+const INFRA_LINE_KINDS = new Set<LayerId>(["pipelines", "cables"]);
+// GDP-per-capita color ramp endpoints (low → mid → high).
+const GDP_LO = Cesium.Color.fromCssColorString("#ff414e");
+const GDP_MID = Cesium.Color.fromCssColorString("#ffb347");
+const GDP_HI = Cesium.Color.fromCssColorString("#5dff9e");
+function gdpRamp(t: number): Cesium.Color {
+  const c = new Cesium.Color();
+  if (t < 0.5) Cesium.Color.lerp(GDP_LO, GDP_MID, t / 0.5, c);
+  else Cesium.Color.lerp(GDP_MID, GDP_HI, (t - 0.5) / 0.5, c);
+  return c;
+}
 
 // live state for one aircraft. We keep a "truth" target (tLon/tLat/tAlt) that
 // is corrected on each poll and dead-reckoned forward every frame, and a
@@ -448,6 +515,86 @@ function renderLayer(
     return;
   }
 
+  // ---- INFRA point layers (fixed sites): one shared renderer, colored per
+  // layer. Cheap Cesium points so dense sets (airports, ports) stay smooth. ----
+  if (INFRA_POINT_KINDS.has(id)) {
+    const col = Cesium.Color.fromCssColorString(LAYER_BY_ID[id].color);
+    const outline = Cesium.Color.fromCssColorString("#0b0612");
+    for (const s of items as InfraSite[]) {
+      const eid = `${id}:${s.id}`;
+      if (ds.entities.getById(eid)) continue; // skip dupe ids defensively
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 0),
+        point: {
+          pixelSize: 7,
+          color: col.withAlpha(0.9),
+          outlineColor: outline.withAlpha(0.85),
+          outlineWidth: 1,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.25, 4.0e7, 0.4),
+        },
+      });
+      sel.set(eid, { kind: id as InfraPointKind, ...s });
+    }
+    return;
+  }
+
+  // ---- INFRA line layers (pipelines / submarine cables): polyline routes ----
+  if (INFRA_LINE_KINDS.has(id)) {
+    const col = Cesium.Color.fromCssColorString(LAYER_BY_ID[id].color);
+    for (const ln of items as InfraLine[]) {
+      let seg = 0;
+      for (const path of ln.paths || []) {
+        if (!path || path.length < 2) continue;
+        const eid = `${id}:${ln.id}:${seg++}`;
+        if (ds.entities.getById(eid)) continue;
+        ds.entities.add({
+          id: eid,
+          polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArray(path.flat()),
+            width: 1.6,
+            material: col.withAlpha(0.65),
+            arcType: Cesium.ArcType.GEODESIC,
+          },
+        });
+        sel.set(eid, { kind: id as InfraLineKind, ...ln });
+      }
+    }
+    return;
+  }
+
+  // ---- GDP per capita: graduated bubbles at country centroids, shaded by a
+  // log-scaled low→high ramp (a lightweight stand-in for a full choropleth). ----
+  if (id === "gdp") {
+    const data = items as GdpDatum[];
+    if (!data.length) return;
+    const vals = data.map((d) => d.value).filter((v) => v > 0);
+    const lo = Math.log10(Math.max(Math.min(...vals), 100));
+    const hi = Math.log10(Math.max(...vals));
+    for (const d of data) {
+      const eid = `gdp:${d.id}`;
+      if (ds.entities.getById(eid)) continue;
+      const t =
+        hi > lo
+          ? Math.min(1, Math.max(0, (Math.log10(Math.max(d.value, 100)) - lo) / (hi - lo)))
+          : 0.5;
+      const col = gdpRamp(t);
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(d.lon, d.lat, 0),
+        point: {
+          pixelSize: 6 + t * 12,
+          color: col.withAlpha(0.7),
+          outlineColor: col,
+          outlineWidth: 1,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.1, 6.0e7, 0.5),
+        },
+      });
+      sel.set(eid, { kind: "gdp", ...d });
+    }
+    return;
+  }
+
 }
 
 export default function WorldView({ onReady }: { onReady?: () => void }) {
@@ -522,6 +669,19 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     navyShips: [],
     bathymetry: [], // imagery toggle, never carries feed data
     shippingRoutes: [], // imagery toggle, never carries feed data
+    // INFRA
+    lng: [],
+    nuclear: [],
+    oilgas: [],
+    refineries: [],
+    airports: [],
+    minerals: [],
+    datacenters: [],
+    desal: [],
+    ports: [],
+    pipelines: [],
+    cables: [],
+    gdp: [],
   });
 
   const layers = useWorldView((s) => s.layers);
