@@ -9,18 +9,29 @@ import { ACTIVITY_QUERY, classifyActivity } from "../lib/activity";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function fetchOne(query: string): Promise<GdeltArticle[]> {
-  const res = await fetch(buildDocUrl(query), {
-    headers: {
-      "user-agent":
-        "WORLDVIEW-events-bot/1.0 (+https://worldview-henna.vercel.app)",
-    },
-  });
-  if (!res.ok) throw new Error(`gdelt HTTP ${res.status}`);
-  const text = await res.text();
-  if (!text.trimStart().startsWith("{")) {
-    throw new Error(`gdelt non-json: ${text.slice(0, 80)}`);
+  let lastErr: unknown;
+  // GDELT intermittently blocks / 429s even GitHub runner IPs — retry with backoff
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleep(6000);
+    try {
+      const res = await fetch(buildDocUrl(query), {
+        headers: {
+          "user-agent":
+            "WORLDVIEW-events-bot/1.0 (+https://worldview-henna.vercel.app)",
+        },
+      });
+      if (!res.ok) throw new Error(`gdelt HTTP ${res.status}`);
+      const text = await res.text();
+      if (!text.trimStart().startsWith("{")) {
+        throw new Error(`gdelt non-json: ${text.slice(0, 80)}`);
+      }
+      return (JSON.parse(text).articles ?? []) as GdeltArticle[];
+    } catch (e) {
+      lastErr = e;
+      console.log(`  query attempt ${attempt + 1} failed: ${String(e)}`);
+    }
   }
-  return (JSON.parse(text).articles ?? []) as GdeltArticle[];
+  throw lastErr;
 }
 
 async function main() {
