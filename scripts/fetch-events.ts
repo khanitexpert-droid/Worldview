@@ -43,13 +43,9 @@ async function main() {
     process.exit(1);
   }
   const items = aggregate([...merged.values()]);
-  const payload = { items, source: "gdelt", fetchedAt: new Date().toISOString() };
-  writeFileSync("events.json", JSON.stringify(payload));
-  console.log(`WROTE events.json: ${items.length} countries from ${merged.size} articles`);
 
   // ---- ACTIVITY feed: a dedicated conflict query, classified into categories.
-  // Falls back to classifying the already-merged articles if the extra query
-  // fails, so activity.json is ALWAYS written (the publish step copies it).
+  // Falls back to classifying the already-merged articles if the extra query fails.
   let conflict: GdeltArticle[] = [];
   await sleep(5500); // stay under GDELT's 1-request/5s limit
   try {
@@ -59,11 +55,15 @@ async function main() {
     console.log(`activity query FAILED: ${String(e)} — classifying merged set`);
   }
   const activity = classifyActivity([...conflict, ...merged.values()]);
-  writeFileSync(
-    "activity.json",
-    JSON.stringify({ items: activity, source: "gdelt", fetchedAt: new Date().toISOString() })
-  );
-  console.log(`WROTE activity.json: ${activity.length} classified events`);
+
+  const fetchedAt = new Date().toISOString();
+  // events.json carries BOTH the world-events (items) and the classified ACTIVITY
+  // feed (activity), so the existing publish step ships activity too — no workflow
+  // change needed (updating .github/workflows needs a token `workflow` scope).
+  writeFileSync("events.json", JSON.stringify({ items, activity, source: "gdelt", fetchedAt }));
+  // stand-alone activity.json for the local-dev /api/activity fallback
+  writeFileSync("activity.json", JSON.stringify({ items: activity, source: "gdelt", fetchedAt }));
+  console.log(`WROTE events.json: ${items.length} countries, ${activity.length} activity events`);
 }
 
 main().catch((e) => {

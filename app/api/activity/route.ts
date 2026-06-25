@@ -4,13 +4,13 @@ import { existsSync, readFileSync } from "node:fs";
 export const dynamic = "force-dynamic";
 
 // ACTIVITY data is produced by the SAME scheduled GitHub Action as world-events
-// (scripts/fetch-events.ts classifies GDELT conflict coverage into categories and
-// writes activity.json, published to the `data` branch). GDELT blocks Vercel's
-// IPs, so we never fetch GDELT here — we relay the Action's file. In local dev,
-// if you've run the script (activity.json at the project root), we serve that so
-// you can preview real data before the Action has published.
+// (scripts/fetch-events.ts classifies GDELT conflict coverage and EMBEDS it in
+// events.json under `activity`). GDELT blocks Vercel's IPs, so we never fetch
+// GDELT here — we relay the Action's published events.json and read its
+// `activity` array. In local dev, if you've run the script (activity.json at the
+// project root), we serve that so you can preview before the Action has published.
 const DATA_URL =
-  "https://raw.githubusercontent.com/khanitexpert-droid/Worldview/data/activity.json";
+  "https://raw.githubusercontent.com/khanitexpert-droid/Worldview/data/events.json";
 
 interface Payload {
   items: ActivityEvent[];
@@ -54,8 +54,8 @@ export async function GET() {
     const url = `${DATA_URL}?t=${Math.floor(Date.now() / 60000)}`;
     const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error(`data branch ${res.status}`);
-    const d = (await res.json()) as { items?: ActivityEvent[]; fetchedAt?: string };
-    const items = d.items ?? [];
+    const d = (await res.json()) as { activity?: ActivityEvent[]; fetchedAt?: string };
+    const items = d.activity ?? [];
     return json({
       items,
       source: "gdelt",
