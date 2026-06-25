@@ -10,10 +10,14 @@ export const dynamic = "force-dynamic";
 const FEEDS: { source: string; url: string }[] = [
   { source: "Al Jazeera", url: "https://www.aljazeera.com/xml/rss/all.xml" },
   { source: "BBC", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
-  { source: "Times of Israel", url: "https://www.timesofisrael.com/feed/" },
   { source: "France 24", url: "https://www.france24.com/en/rss" },
+  { source: "Times of Israel", url: "https://www.timesofisrael.com/feed/" },
+  { source: "The Guardian", url: "https://www.theguardian.com/world/rss" },
+  { source: "Naval News", url: "https://www.navalnews.com/feed/" },
+  { source: "The War Zone", url: "https://www.twz.com/feed" },
+  { source: "Military Times", url: "https://www.militarytimes.com/arc/outboundfeeds/rss/?outputType=xml" },
 ];
-const MAX = 40;
+const MAX = 50;
 const CACHE_TTL = 180_000; // 3 min
 
 let cache: { at: number; items: ActivityEvent[] } | null = null;

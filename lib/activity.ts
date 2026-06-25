@@ -21,12 +21,12 @@ export function buildActivityUrl(): string {
 
 // most-specific category first (an item matching several wins the top one)
 const CATS: [ActivityCategory, string[]][] = [
-  ["NAVAL", ["navy", "naval", "warship", "destroyer", "frigate", "submarine", "aircraft carrier", "fleet", "maritime", "coast guard"]],
-  ["AIR", ["airstrike", "air strike", "air raid", "warplane", "fighter jet", "air force", "air defense", "air defence", "drone strike", "drone attack", "drone", "helicopter gunship", "sortie", "no-fly"]],
-  ["EXPLOSION", ["explosion", "blast", " ied", "car bomb", "suicide bomb", "roadside bomb", "detonat"]],
-  ["STRIKE", ["missile", "rocket", "shelling", "bombard", "artillery strike", "precision strike"]],
-  ["DIPLOMATIC", ["ceasefire", "truce", "negotiat", "peace talk", "peace deal", "summit", "diplomat", "treaty", "sanction", "accord", "prisoner swap", "peace plan"]],
-  ["GROUND", ["troops", "soldier", "infantry", "tank", "artillery", "offensive", "ground assault", "border clash", "militia", "frontline", "incursion", "ambush"]],
+  ["NAVAL", ["navy", "naval", "warship", "destroyer", "frigate", "submarine", "aircraft carrier", "fleet", "maritime", "coast guard", "houthi", "red sea", "tanker", "strait of", "amphibious"]],
+  ["AIR", ["airstrike", "air strike", "air raid", "warplane", "fighter jet", "air force", "air defense", "air defence", "drone", "uav", "sortie", "f-16", "f-35", "mig-", "interceptor", "no-fly"]],
+  ["EXPLOSION", ["explosion", "blast", " ied", "car bomb", "suicide bomb", "roadside bomb", "detonat", "bombing", "grenade"]],
+  ["STRIKE", ["missile", "rocket", "shelling", "bombard", "ballistic", "barrage", "salvo", "hypersonic", "artillery strike", "precision strike"]],
+  ["DIPLOMATIC", ["ceasefire", "truce", "negotiat", "peace talk", "peace deal", "summit", "diplomat", "treaty", "sanction", "accord", "prisoner swap", "peace plan", "talks", "envoy"]],
+  ["GROUND", ["troops", "soldier", "infantry", "tank", "artillery", "offensive", "ground assault", "border clash", "militia", "frontline", "incursion", "ambush", "advance", "captured", "seized"]],
 ];
 // conflict words that don't pin a category → bucketed as GROUND
 const GENERIC = ["attack", "clash", "militant", "insurgent", "warfare", "killed", "gunmen", "raid", "siege", "fighting", "assault"];
