@@ -46,6 +46,16 @@ function severityOf(t: string, cat: ActivityCategory): ActivityEvent["severity"]
   return "LOW";
 }
 
+/** Keyword-classify one headline into a category + severity (null if not conflict). */
+export function classifyTitle(
+  title: string
+): { category: ActivityCategory; severity: ActivityEvent["severity"] } | null {
+  const t = title.toLowerCase();
+  const cat = categoryOf(t);
+  if (!cat) return null;
+  return { category: cat, severity: severityOf(t, cat) };
+}
+
 /** Classify + de-dupe GDELT articles into ACTIVITY events (newest first). */
 export function classifyActivity(articles: GdeltArticle[], max = 120): ActivityEvent[] {
   const seen = new Set<string>();
@@ -54,13 +64,13 @@ export function classifyActivity(articles: GdeltArticle[], max = 120): ActivityE
     if (!a.url || seen.has(a.url)) continue;
     const title = cleanTitle(a.title);
     if (!title) continue;
-    const cat = categoryOf(title.toLowerCase());
-    if (!cat) continue;
+    const c = classifyTitle(title);
+    if (!c) continue;
     seen.add(a.url);
     out.push({
       id: a.url,
-      category: cat,
-      severity: severityOf(title.toLowerCase(), cat),
+      category: c.category,
+      severity: c.severity,
       title,
       url: a.url,
       domain: a.domain ?? "",

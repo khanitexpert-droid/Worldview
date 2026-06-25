@@ -1,74 +1,111 @@
 import type { ActivityEvent } from "@/lib/types";
-import { existsSync, readFileSync } from "node:fs";
+import { classifyTitle } from "@/lib/activity";
 
 export const dynamic = "force-dynamic";
 
-// ACTIVITY data is produced by the SAME scheduled GitHub Action as world-events
-// (scripts/fetch-events.ts classifies GDELT conflict coverage and EMBEDS it in
-// events.json under `activity`). GDELT blocks Vercel's IPs, so we never fetch
-// GDELT here — we relay the Action's published events.json and read its
-// `activity` array. In local dev, if you've run the script (activity.json at the
-// project root), we serve that so you can preview before the Action has published.
-const DATA_URL =
-  "https://raw.githubusercontent.com/khanitexpert-droid/Worldview/data/events.json";
+// ACTIVITY — live conflict/incident stream. Aggregated from free news RSS fetched
+// per request (works from Vercel, unlike GDELT which permanently 429s datacenter
+// IPs), then keyword-classified into STRIKE/AIR/NAVAL/GROUND/EXPLOSION/DIPLOMATIC.
+// Always fresh — no GitHub Action / relay / data-branch dependency.
+const FEEDS: { source: string; url: string }[] = [
+  { source: "Al Jazeera", url: "https://www.aljazeera.com/xml/rss/all.xml" },
+  { source: "BBC", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+  { source: "Times of Israel", url: "https://www.timesofisrael.com/feed/" },
+  { source: "France 24", url: "https://www.france24.com/en/rss" },
+];
+const MAX = 40;
+const CACHE_TTL = 180_000; // 3 min
 
-interface Payload {
-  items: ActivityEvent[];
-  source: string;
-  live: boolean;
-  fetchedAt: string;
-  error?: string;
+let cache: { at: number; items: ActivityEvent[] } | null = null;
+
+function decode(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&apos;/g, "'")
+    .replace(/&#0?39;/g, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8211;/g, "–")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .trim();
 }
 
-function json(p: Payload) {
-  const fresh = p.items.length > 0;
-  return Response.json(p, {
-    headers: {
-      "Cache-Control": fresh
-        ? "public, s-maxage=120, stale-while-revalidate=86400"
-        : "public, s-maxage=20",
-    },
+function tag(chunk: string, name: string): string {
+  const m = chunk.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`));
+  if (!m) return "";
+  const cd = m[1].match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
+  return decode(cd ? cd[1] : m[1]);
+}
+
+function parse(xml: string, source: string): ActivityEvent[] {
+  const out: ActivityEvent[] = [];
+  for (const chunk of xml.split("<item").slice(1)) {
+    const body = chunk.split("</item>")[0];
+    const title = tag(body, "title");
+    const url = tag(body, "link");
+    if (!title || !url) continue;
+    const c = classifyTitle(title);
+    if (!c) continue; // keep only conflict-classifiable headlines
+    const t = Date.parse(tag(body, "pubDate") || tag(body, "dc:date"));
+    out.push({
+      id: url,
+      category: c.category,
+      severity: c.severity,
+      title,
+      url,
+      domain: source,
+      time: Number.isFinite(t) ? t : Date.now(),
+    });
+  }
+  return out;
+}
+
+async function fetchFeed(feed: (typeof FEEDS)[number]): Promise<ActivityEvent[]> {
+  const res = await fetch(feed.url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(8000),
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; WorldViewBot/1.0)" },
   });
+  if (!res.ok) throw new Error(`${feed.source} ${res.status}`);
+  return parse(await res.text(), feed.source);
+}
+
+function json(items: ActivityEvent[], sMaxAge: number) {
+  return Response.json(
+    { items, source: "RSS", live: items.length > 0, fetchedAt: new Date().toISOString() },
+    {
+      headers: {
+        "Cache-Control": `public, s-maxage=${sMaxAge}, stale-while-revalidate=600`,
+      },
+    }
+  );
 }
 
 export async function GET() {
-  // dev convenience: serve a locally-generated activity.json if present
-  if (process.env.NODE_ENV !== "production" && existsSync("activity.json")) {
-    try {
-      const d = JSON.parse(readFileSync("activity.json", "utf8")) as {
-        items?: ActivityEvent[];
-        fetchedAt?: string;
-      };
-      return json({
-        items: d.items ?? [],
-        source: "gdelt (local)",
-        live: (d.items?.length ?? 0) > 0,
-        fetchedAt: d.fetchedAt ?? new Date().toISOString(),
-      });
-    } catch {
-      /* fall through to the data branch */
-    }
-  }
+  if (cache && Date.now() - cache.at < CACHE_TTL) return json(cache.items, 180);
 
-  try {
-    const url = `${DATA_URL}?t=${Math.floor(Date.now() / 60000)}`;
-    const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(8000) });
-    if (!res.ok) throw new Error(`data branch ${res.status}`);
-    const d = (await res.json()) as { activity?: ActivityEvent[]; fetchedAt?: string };
-    const items = d.activity ?? [];
-    return json({
-      items,
-      source: "gdelt",
-      live: items.length > 0,
-      fetchedAt: d.fetchedAt ?? new Date().toISOString(),
-    });
-  } catch (err) {
-    return json({
-      items: [],
-      source: "fallback",
-      live: false,
-      fetchedAt: new Date().toISOString(),
-      error: String(err),
-    });
+  const settled = await Promise.allSettled(FEEDS.map(fetchFeed));
+  const merged = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+
+  // de-dupe by title, newest first
+  const seen = new Set<string>();
+  const items = merged
+    .sort((a, b) => b.time - a.time)
+    .filter((h) => {
+      const k = h.title.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .slice(0, MAX);
+
+  if (items.length) {
+    cache = { at: Date.now(), items };
+    return json(items, 180);
   }
+  if (cache) return json(cache.items, 60);
+  return json([], 60);
 }
