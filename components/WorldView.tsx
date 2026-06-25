@@ -15,6 +15,7 @@ import {
   fetchFlights,
   fetchShips,
   fetchSatellites,
+  fetchNavyShips,
 } from "@/lib/feeds";
 import type {
   Flight,
@@ -44,6 +45,7 @@ import BrandBadge from "./hud/BrandBadge";
 import SearchBar from "./hud/SearchBar";
 import SelectedPopup from "./hud/SelectedPopup";
 import ActivityPopup from "./hud/ActivityPopup";
+import { createShipDensityProvider } from "@/lib/shipDensity";
 
 // ---- palette ----
 const C = {
@@ -110,6 +112,8 @@ const PLANE_GLYPH =
 const BASE_ARMY_IMAGE = baseBadge("#ff5a4d", "#ffd9d3", "#2a0805", STAR_GLYPH);
 const BASE_NAVAL_IMAGE = baseBadge("#00e5ff", "#ccf8ff", "#02303a", ANCHOR_GLYPH);
 const BASE_AIR_IMAGE = baseBadge("#b14bff", "#e7ccff", "#1a0830", PLANE_GLYPH);
+// curated navy-ship badge (green anchor disc)
+const NAVY_IMAGE = baseBadge("#5dff9e", "#d6ffe8", "#06301c", ANCHOR_GLYPH);
 function branchImage(branch: string): string {
   if (branch === "NAVAL") return BASE_NAVAL_IMAGE;
   if (branch === "AIR") return BASE_AIR_IMAGE;
@@ -127,7 +131,10 @@ const FLAME_IMAGE = `data:image/svg+xml,${encodeURIComponent(FLAME_SVG)}`;
 // satellites are propagated client-side every frame by SatelliteField, and
 // photoreal is a scene-level toggle (Google 3D tiles), not a polled feed — both
 // opt out of the generic poll/render pipeline entirely.
-type PollLayerId = Exclude<LayerId, "satellites" | "photoreal">;
+type PollLayerId = Exclude<
+  LayerId,
+  "satellites" | "photoreal" | "bathymetry" | "shippingRoutes"
+>;
 
 // colors cycled through for each imported user layer (MY DATA)
 const USER_LAYER_COLORS = [
@@ -154,6 +161,8 @@ const POLL_MS: Record<PollLayerId, number> = {
   // new slice promptly. The client fetch is multi-query (~16s) so this is well
   // clear of overlapping itself.
   events: 180000,
+  // curated static vessels — effectively load-once (like bases)
+  navyShips: 86_400_000,
 };
 
 const FETCHERS: Record<
@@ -166,6 +175,7 @@ const FETCHERS: Record<
   bases: fetchBases,
   fires: fetchFires,
   events: fetchEvents,
+  navyShips: fetchNavyShips,
 };
 
 // layers handled by the generic (snap-on-poll) renderer — flights and ships are
@@ -350,6 +360,36 @@ function renderLayer(
     return;
   }
 
+  if (id === "navyShips") {
+    for (const s of items as import("@/lib/types").NavyShip[]) {
+      const eid = `navyShips:${s.id}`;
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 0),
+        billboard: {
+          image: NAVY_IMAGE,
+          width: 24,
+          height: 24,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.0, 4.0e7, 0.5),
+        },
+        label: {
+          text: s.hull,
+          font: "bold 10px sans-serif",
+          fillColor: C.green,
+          showBackground: true,
+          backgroundColor: Cesium.Color.fromCssColorString("#0b0612").withAlpha(0.8),
+          backgroundPadding: new Cesium.Cartesian2(5, 3),
+          pixelOffset: new Cesium.Cartesian2(0, -20),
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          // fade the hull label out when zoomed far so the globe stays clean
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.0, 1.0e7, 0.0),
+        },
+      });
+      sel.set(eid, { kind: "navyShips", ...s });
+    }
+    return;
+  }
+
   if (id === "fires") {
     for (const f of items as import("@/lib/types").Fire[]) {
       const eid = `fires:${f.id}`;
@@ -446,6 +486,10 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const missilesDsRef = useRef<Cesium.CustomDataSource | null>(null);
   // ---- marker for the selected ACTIVITY item (click a feed row) ----
   const activityDsRef = useRef<Cesium.CustomDataSource | null>(null);
+  // ---- bathymetry (Esri Ocean) imagery layers, lazily created ----
+  const bathyLayersRef = useRef<Cesium.ImageryLayer[]>([]);
+  // ---- shipping-routes density imagery (LERC, lazily created) ----
+  const shipRoutesLayerRef = useRef<Cesium.ImageryLayer | null>(null);
   // ---- Google Photorealistic 3D Tiles (lazy-created scene primitive) ----
   const tilesetRef = useRef<Cesium.Cesium3DTileset | null>(null);
   const photorealLoadingRef = useRef(false);
@@ -475,12 +519,17 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     fires: [],
     events: [],
     photoreal: [], // scene toggle, never carries feed data
+    navyShips: [],
+    bathymetry: [], // imagery toggle, never carries feed data
+    shippingRoutes: [], // imagery toggle, never carries feed data
   });
 
   const layers = useWorldView((s) => s.layers);
   const sideTab = useWorldView((s) => s.sideTab);
   const missileRingIds = useWorldView((s) => s.missileRingIds);
   const selectedActivity = useWorldView((s) => s.selectedActivity);
+  const bathymetry = useWorldView((s) => s.layers.bathymetry);
+  const shippingRoutes = useWorldView((s) => s.layers.shippingRoutes);
   const photoreal = useWorldView((s) => s.layers.photoreal);
   const userLayers = useWorldView((s) => s.userLayers);
   const addUserLayer = useWorldView((s) => s.addUserLayer);
@@ -1502,6 +1551,38 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       },
     });
   }, [selectedActivity, ready]);
+
+  // ---- bathymetry: Esri World Ocean Base + Reference imagery (lazy create) ----
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !ready) return;
+    if (bathymetry && bathyLayersRef.current.length === 0) {
+      const tile = (path: string) =>
+        viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: `https://services.arcgisonline.com/arcgis/rest/services/Ocean/${path}/MapServer/tile/{z}/{y}/{x}`,
+            maximumLevel: 13,
+            credit: "Esri, GEBCO, NOAA, National Geographic",
+          })
+        );
+      // only the depth base — NOT World_Ocean_Reference, whose place/depth labels
+      // would double up with the app's own ocean/country labels.
+      bathyLayersRef.current = [tile("World_Ocean_Base")];
+    }
+    for (const l of bathyLayersRef.current) l.show = bathymetry;
+  }, [bathymetry, ready]);
+
+  // ---- shipping routes: World Bank/IMF density (LERC) decoded + colormapped ----
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !ready) return;
+    if (shippingRoutes && !shipRoutesLayerRef.current) {
+      shipRoutesLayerRef.current = viewer.imageryLayers.addImageryProvider(
+        createShipDensityProvider()
+      );
+    }
+    if (shipRoutesLayerRef.current) shipRoutesLayerRef.current.show = shippingRoutes;
+  }, [shippingRoutes, ready]);
 
   // ---- world events: stream headlines to intel + drive the breaking-news radar ----
   useEffect(() => {

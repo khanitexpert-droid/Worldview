@@ -8,7 +8,10 @@ export type LayerId =
   | "bases"
   | "fires"
   | "events"
-  | "photoreal";
+  | "photoreal"
+  | "bathymetry"
+  | "navyShips"
+  | "shippingRoutes";
 
 /** A user-imported GIS layer (drag-dropped GeoJSON / Shapefile / KML / GeoTIFF). */
 export interface UserLayer {
@@ -241,11 +244,34 @@ export interface FinHeadline {
   time: number; // epoch ms (parsed from pubDate)
 }
 
+/**
+ * A curated military vessel for the NAVY SHIPS layer (SEA). Public class/role data
+ * (USN / Naval Vessel Register) + an approximate last-reported position — NOT live
+ * AIS (navies don't broadcast). Mirrors deltasweep's "curated military vessel".
+ */
+export interface NavyShip {
+  id: string;
+  name: string; // "USS Michael Murphy (DDG-112)"
+  hull: string; // "DDG-112"
+  shipClass: string; // "Arleigh Burke-class destroyer"
+  fleetGroup: string; // "Escort" | "Carrier Strike Group" | "Amphibious Ready Group"…
+  role: string;
+  crew?: string;
+  displacement?: string;
+  embarked?: string[];
+  operator: string; // "USN"
+  lon: number;
+  lat: number;
+  asOf?: string; // last-reported date
+  wiki?: string; // Wikipedia page title (used to pull a photo in the detail card)
+}
+
 export type FeedEntity =
   | ({ kind: "flights" } & Flight)
   | ({ kind: "satellites" } & Satellite)
   | ({ kind: "earthquakes" } & Earthquake)
   | ({ kind: "ships" } & Ship)
   | ({ kind: "bases" } & MilitaryBase)
+  | ({ kind: "navyShips" } & NavyShip)
   | ({ kind: "fires" } & Fire)
   | ({ kind: "events" } & WorldEvent);

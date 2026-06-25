@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useWorldView } from "@/lib/store";
 import { LAYER_BY_ID } from "@/lib/layers";
 import type { FeedEntity } from "@/lib/types";
@@ -45,6 +46,60 @@ function BaseExtras({
       <a href={sat} target="_blank" rel="noopener noreferrer" className={cls}>
         SATELLITE →
       </a>
+    </div>
+  );
+}
+
+/** Photo (via Wikipedia) + role + embarked-aircraft for a selected navy vessel. */
+function NavyExtras({ ship }: { ship: Extract<FeedEntity, { kind: "navyShips" }> }) {
+  const [img, setImg] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!ship.wiki) return;
+    fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(ship.wiki)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled) setImg(d?.thumbnail?.source ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [ship.wiki]);
+
+  return (
+    <div className="mb-2">
+      {img && (
+        <img
+          src={img}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="mb-2 max-h-32 w-full rounded-sm object-cover"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      )}
+      <div className="mb-1 text-[9px] tracking-[0.2em] text-wv-muted">ROLE</div>
+      <p className="text-[10px] leading-relaxed text-wv-text/85">{ship.role}</p>
+      {ship.embarked && ship.embarked.length > 0 && (
+        <>
+          <div className="mb-1 mt-2 text-[9px] tracking-[0.2em]" style={{ color: "#5dff9e" }}>
+            EMBARKED AIRCRAFT
+          </div>
+          <div className="flex flex-col gap-1">
+            {ship.embarked.map((a, i) => (
+              <div
+                key={i}
+                className="border border-wv-border px-2 py-1 text-[10px] text-wv-text/85"
+                style={{ background: "rgba(93,255,158,0.06)" }}
+              >
+                {a}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -193,6 +248,17 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
       rows.push(["TYPE", <span style={{ color: br.color }}>{br.type}</span>]);
       return { title: e.name, rows };
     }
+    case "navyShips": {
+      const rows: [string, React.ReactNode][] = [
+        ["CLASS", e.shipClass],
+        ["GROUP", e.fleetGroup],
+      ];
+      if (e.crew) rows.push(["CREW", e.crew]);
+      if (e.displacement) rows.push(["DISPLACEMENT", e.displacement]);
+      if (e.operator) rows.push(["OPERATOR", e.operator]);
+      if (e.asOf) rows.push(["AS OF", e.asOf]);
+      return { title: e.name, rows };
+    }
     case "fires": {
       const sat =
         e.satellite === "N"
@@ -295,6 +361,9 @@ export default function EntityBody({
         {selected.kind === "ships" && (
           <VesselExtras mmsi={selected.id} name={selected.name} />
         )}
+
+        {/* curated navy vessel — photo + role + embarked aircraft */}
+        {selected.kind === "navyShips" && <NavyExtras ship={selected} />}
 
         {/* world-event headlines (real, clickable news links) */}
         {selected.kind === "events" && <EventHeadlines event={selected} />}

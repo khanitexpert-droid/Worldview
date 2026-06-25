@@ -39,6 +39,11 @@ export const fetchBases = async () => ({
   items: await getJSON<MilitaryBase[]>("/military_bases.json"),
   source: "OPENSTREETMAP",
 });
+// Curated military vessels (NAVY SHIPS) — a static reference set, not live AIS.
+export const fetchNavyShips = async () => ({
+  items: (await import("./navalAssets")).NAVAL_ASSETS,
+  source: "CURATED · USN",
+});
 // Read the events the scheduled GitHub Action publishes (relayed same-origin by
 // /api/events). We do NOT fetch GDELT from the browser — its CORS on the JSON
 // endpoint is unreliable and per-IP rate limits bite visitors.

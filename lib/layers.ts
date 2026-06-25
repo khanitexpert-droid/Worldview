@@ -42,6 +42,48 @@ export const LAYERS: LayerMeta[] = [
     defaultOn: false,
   },
   {
+    id: "navyShips",
+    label: "NAVY SHIPS",
+    short: "NAVY",
+    icon: "⚓",
+    color: "#5dff9e",
+    source: "CURATED · USN",
+    group: "SEA",
+    info: "Curated positions of notable military vessels (carriers, destroyers, amphibs) with class, role and embarked-aircraft data from public sources (USN / Naval Vessel Register). Positions are approximate / last-reported, not live AIS — navies don't broadcast.",
+    defaultOn: false,
+  },
+  // BATHYMETRY + SHIPPING ROUTES are built but gated to LOCAL/DEV only via
+  // NEXT_PUBLIC_SEA_EXTRAS (set in .env.local, NOT in Vercel) — so they're not
+  // live in prod yet. Flip them on later by adding that env var in Vercel.
+  ...((process.env.NEXT_PUBLIC_SEA_EXTRAS
+    ? [
+        {
+          id: "bathymetry",
+          label: "BATHYMETRY",
+          short: "DEPTH",
+          icon: "≋",
+          color: "#4aa3ff",
+          source: "ESRI OCEAN",
+          group: "SEA",
+          info: "Ocean-floor depth (bathymetry) with depth contours from Esri's World Ocean Base — shelves, trenches and ridges beneath the surface.",
+          defaultOn: false,
+          noCount: true,
+        },
+        {
+          id: "shippingRoutes",
+          label: "SHIPPING ROUTES",
+          short: "ROUTES",
+          icon: "≈",
+          color: "#00e5ff",
+          source: "WORLD BANK / IMF",
+          group: "SEA",
+          info: "Global shipping traffic density (World Bank / IMF AIS, 2015–2021) — brighter lanes carry more traffic. A static density map, not live vessel positions.",
+          defaultOn: false,
+          noCount: true,
+        },
+      ]
+    : []) as LayerMeta[]),
+  {
     id: "satellites",
     label: "SATELLITES",
     short: "SATS",
