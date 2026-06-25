@@ -82,7 +82,7 @@ export const fetchDesal = () =>
   staticInfra<InfraSite>("/infra_desal.json", "OPENSTREETMAP");
 export const fetchPorts = () => staticInfra<InfraSite>("/infra_ports.json", "NGA WPI");
 export const fetchPipelines = () =>
-  staticInfra<InfraLine>("/infra_pipelines.json", "OPENSTREETMAP");
+  staticInfra<InfraLine>("/infra_pipelines.json", "GLOBAL ENERGY MONITOR");
 export const fetchCables = () =>
   staticInfra<InfraLine>("/infra_cables.json", "TELEGEOGRAPHY");
 export const fetchGdp = () => staticInfra<GdpDatum>("/infra_gdp.json", "WORLD BANK");

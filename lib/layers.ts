@@ -198,7 +198,7 @@ export const LAYERS: LayerMeta[] = [
     short: "PIPE",
     icon: "≣",
     color: "#ff8c42",
-    source: "OPENSTREETMAP",
+    source: "GLOBAL ENERGY MONITOR",
     group: "INFRA",
     subgroup: "ENERGY",
     info: "Major oil and gas transmission pipelines — the arteries that move hydrocarbons across borders. Drawn as routes, colored by status.",
