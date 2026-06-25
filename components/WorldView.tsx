@@ -43,6 +43,7 @@ import RightPanels from "./hud/RightPanels";
 import BrandBadge from "./hud/BrandBadge";
 import SearchBar from "./hud/SearchBar";
 import SelectedPopup from "./hud/SelectedPopup";
+import ActivityPopup from "./hud/ActivityPopup";
 
 // ---- palette ----
 const C = {
@@ -172,6 +173,24 @@ const FETCHERS: Record<
 const STATIC_LAYERS = (Object.keys(FETCHERS) as PollLayerId[]).filter(
   (id) => id !== "flights" && id !== "ships"
 );
+
+// ACTIVITY marker palette/labels (match the ACTIVITY panel category colors).
+const ACT_COLOR: Record<string, string> = {
+  STRIKE: "#ff414e",
+  AIR: "#b14bff",
+  NAVAL: "#00e5ff",
+  GROUND: "#ffb347",
+  EXPLOSION: "#ff7a3c",
+  DIPLOMATIC: "#5dff9e",
+};
+const ACT_SHORT: Record<string, string> = {
+  STRIKE: "STRIKE",
+  AIR: "AIR",
+  NAVAL: "NAVAL",
+  GROUND: "GND",
+  EXPLOSION: "EXPL",
+  DIPLOMATIC: "DIPLO",
+};
 
 // Build a geodesic circle as a list of surface positions. We render missile
 // range rings as POLYLINES (not ellipse outlines) because Cesium caps ellipse
@@ -425,6 +444,8 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const bordersDsRef = useRef<Cesium.CustomDataSource | null>(null);
   // ---- missile range rings (shown while the MISSILES side tab is active) ----
   const missilesDsRef = useRef<Cesium.CustomDataSource | null>(null);
+  // ---- marker for the selected ACTIVITY item (click a feed row) ----
+  const activityDsRef = useRef<Cesium.CustomDataSource | null>(null);
   // ---- Google Photorealistic 3D Tiles (lazy-created scene primitive) ----
   const tilesetRef = useRef<Cesium.Cesium3DTileset | null>(null);
   const photorealLoadingRef = useRef(false);
@@ -459,6 +480,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const layers = useWorldView((s) => s.layers);
   const sideTab = useWorldView((s) => s.sideTab);
   const missileRingIds = useWorldView((s) => s.missileRingIds);
+  const selectedActivity = useWorldView((s) => s.selectedActivity);
   const photoreal = useWorldView((s) => s.layers.photoreal);
   const userLayers = useWorldView((s) => s.userLayers);
   const addUserLayer = useWorldView((s) => s.addUserLayer);
@@ -734,6 +756,11 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     const missilesDs = new Cesium.CustomDataSource("missiles");
     viewer.dataSources.add(missilesDs);
     missilesDsRef.current = missilesDs;
+
+    // dedicated datasource for the selected-activity marker
+    const activityDs = new Cesium.CustomDataSource("activity");
+    viewer.dataSources.add(activityDs);
+    activityDsRef.current = activityDs;
 
     // satellite swarm — manages its own PointPrimitiveCollection + preRender loop
     satFieldRef.current = new SatelliteField(scene);
@@ -1447,6 +1474,35 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     }
   }, [ready, missileRingIds]);
 
+  // ---- selected ACTIVITY item → a category marker at its detected location ----
+  useEffect(() => {
+    const ds = activityDsRef.current;
+    if (!ds || !ready) return;
+    ds.entities.removeAll();
+    const a = selectedActivity;
+    if (!a || a.lat == null || a.lon == null) return;
+    const color = Cesium.Color.fromCssColorString(ACT_COLOR[a.category] ?? "#00e5ff");
+    ds.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(a.lon, a.lat),
+      point: {
+        pixelSize: 15,
+        color: color.withAlpha(0.5),
+        outlineColor: color,
+        outlineWidth: 2,
+      },
+      label: {
+        text: ACT_SHORT[a.category] ?? a.category,
+        font: "bold 12px sans-serif",
+        fillColor: color,
+        showBackground: true,
+        backgroundColor: Cesium.Color.fromCssColorString("#0b0612").withAlpha(0.85),
+        backgroundPadding: new Cesium.Cartesian2(6, 4),
+        pixelOffset: new Cesium.Cartesian2(0, -22),
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+      },
+    });
+  }, [selectedActivity, ready]);
+
   // ---- world events: stream headlines to intel + drive the breaking-news radar ----
   useEffect(() => {
     if (!ready || !layers.events) return;
@@ -1700,6 +1756,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       <SearchBar onFlyTo={flyTo} onFlyToRect={flyToRect} />
       <SidePanel onFlyTo={flyTo} />
       <SelectedPopup onFlyTo={flyTo} />
+      <ActivityPopup />
       <StatusBar />
       <BrandBadge />
       <RightPanels

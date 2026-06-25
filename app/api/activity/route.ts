@@ -1,5 +1,6 @@
 import type { ActivityEvent } from "@/lib/types";
 import { classifyTitle } from "@/lib/activity";
+import { geolocate } from "@/lib/places";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,16 @@ function tag(chunk: string, name: string): string {
   return decode(cd ? cd[1] : m[1]);
 }
 
+// pull a thumbnail URL from common RSS image fields (Media RSS / enclosure / img)
+function imageOf(body: string): string | undefined {
+  const m =
+    body.match(/<media:thumbnail[^>]*\burl="([^"]+)"/i) ||
+    body.match(/<media:content[^>]*\burl="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i) ||
+    body.match(/<enclosure[^>]*\burl="([^"]+)"[^>]*type="image/i) ||
+    body.match(/<img[^>]*\bsrc="([^"]+)"/i);
+  return m ? m[1] : undefined;
+}
+
 function parse(xml: string, source: string): ActivityEvent[] {
   const out: ActivityEvent[] = [];
   for (const chunk of xml.split("<item").slice(1)) {
@@ -54,6 +65,7 @@ function parse(xml: string, source: string): ActivityEvent[] {
     const c = classifyTitle(title);
     if (!c) continue; // keep only conflict-classifiable headlines
     const t = Date.parse(tag(body, "pubDate") || tag(body, "dc:date"));
+    const g = geolocate(title);
     out.push({
       id: url,
       category: c.category,
@@ -62,6 +74,10 @@ function parse(xml: string, source: string): ActivityEvent[] {
       url,
       domain: source,
       time: Number.isFinite(t) ? t : Date.now(),
+      lat: g?.lat,
+      lon: g?.lon,
+      place: g?.name,
+      image: imageOf(body),
     });
   }
   return out;

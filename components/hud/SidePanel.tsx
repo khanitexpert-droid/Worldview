@@ -73,7 +73,7 @@ export default function SidePanel({
       {/* active tab content */}
       <div className="wv-scroll flex-1 overflow-y-auto">
         {tab === "caspian" && <CaspianPanel />}
-        {tab === "activity" && <ActivityPanel />}
+        {tab === "activity" && <ActivityPanel onFlyTo={onFlyTo} />}
         {tab === "news" && <NewsPanel />}
         {tab === "markets" && <MarketsPanel />}
         {tab === "missiles" && <MissilesPanel onFlyTo={onFlyTo} />}

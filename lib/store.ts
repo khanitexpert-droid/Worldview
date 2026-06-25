@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { FeedEntity, LayerId, SatOrbit, UserLayer } from "./types";
+import type { ActivityEvent, FeedEntity, LayerId, SatOrbit, UserLayer } from "./types";
 import type { MeasureMode, MeasureUnit } from "./globeTools";
 import { LAYERS } from "./layers";
 
@@ -50,6 +50,10 @@ interface WorldViewState {
   // which missile range rings are shown on the globe (per-missile, by id)
   missileRingIds: string[];
   toggleMissileRing: (id: string) => void;
+
+  // ---- selected ACTIVITY item (click a feed row → fly + marker + detail card) ----
+  selectedActivity: ActivityEvent | null;
+  setSelectedActivity: (a: ActivityEvent | null) => void;
 
   counts: Record<LayerId, number>;
   setCount: (id: LayerId, n: number) => void;
@@ -125,6 +129,9 @@ export const useWorldView = create<WorldViewState>((set) => ({
         ? s.missileRingIds.filter((x) => x !== id)
         : [...s.missileRingIds, id],
     })),
+
+  selectedActivity: null,
+  setSelectedActivity: (a) => set({ selectedActivity: a }),
 
   counts: initialCounts,
   setCount: (id, n) => set((s) => ({ counts: { ...s.counts, [id]: n } })),

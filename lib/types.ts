@@ -212,6 +212,10 @@ export interface ActivityEvent {
   url: string;
   domain: string; // reporting outlet
   time: number; // epoch ms (GDELT seendate)
+  lat?: number; // detected location (country / city / area level)
+  lon?: number;
+  place?: string; // detected location name
+  image?: string; // thumbnail from the RSS item, if present
 }
 
 /**

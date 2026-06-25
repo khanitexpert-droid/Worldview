@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ActivityCategory, ActivityEvent } from "@/lib/types";
+import { useWorldView } from "@/lib/store";
 
 const POLL_MS = 180_000;
 
@@ -46,10 +47,16 @@ function ago(ts: number): string {
  * ACTIVITY — OSINT conflict/incident stream (real data via /api/activity, GDELT
  * conflict coverage classified into categories). Filter chips + clean rows.
  */
-export default function ActivityPanel() {
+export default function ActivityPanel({
+  onFlyTo,
+}: {
+  onFlyTo?: (lon: number, lat: number, h?: number) => void;
+}) {
   const [items, setItems] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"ALL" | ActivityCategory>("ALL");
+  const selected = useWorldView((s) => s.selectedActivity);
+  const setSelected = useWorldView((s) => s.setSelectedActivity);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,49 +112,56 @@ export default function ActivityPanel() {
         <div className="px-3 py-4 text-[10px] text-wv-muted">Acquiring activity…</div>
       ) : !items.length ? (
         <div className="px-4 py-6 text-center text-[10px] leading-relaxed text-wv-muted">
-          No activity yet. The feed populates from the scheduled GDELT job — give
-          it a few minutes after deploy.
+          No classifiable activity in the live feeds right now — check back shortly.
         </div>
       ) : shown.length === 0 ? (
         <div className="px-3 py-4 text-[10px] text-wv-muted">
           No {CAT_SHORT[filter as ActivityCategory]} events in the last 24h.
         </div>
       ) : (
-        shown.map((e) => (
-          <a
-            key={e.id}
-            href={e.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group block border-b border-wv-border/40 px-3 py-2 transition-colors hover:bg-white/[0.03]"
-          >
-            <div className="flex items-center gap-2 text-[8.5px] tracking-[0.12em]">
-              <span
-                className="border px-1 py-px font-bold"
-                style={{ color: CAT_COLOR[e.category], borderColor: `${CAT_COLOR[e.category]}66` }}
-              >
-                {CAT_SHORT[e.category]}
-              </span>
-              <span
-                className="font-bold"
-                style={{ color: SEV_COLOR[e.severity] }}
-              >
-                {e.severity}
-              </span>
-              <span className="ml-auto tabular-nums text-wv-muted">{ago(e.time)}</span>
-            </div>
-            <div className="mt-1 text-[11px] font-semibold leading-snug text-wv-text/90 group-hover:text-wv-text">
-              {e.title}
-            </div>
-            {e.domain && (
-              <div className="mt-0.5 text-[8.5px] text-wv-muted">{e.domain}</div>
-            )}
-          </a>
-        ))
+        shown.map((e) => {
+          const on = selected?.id === e.id;
+          return (
+            <button
+              key={e.id}
+              onClick={() => {
+                setSelected(e);
+                if (e.lat != null && e.lon != null) onFlyTo?.(e.lon, e.lat, 900_000);
+              }}
+              className="group block w-full border-b border-wv-border/40 px-3 py-2 text-left transition-colors hover:bg-white/[0.03]"
+              style={{
+                background: on ? "rgba(255,255,255,0.05)" : undefined,
+                borderLeft: `2px solid ${on ? CAT_COLOR[e.category] : "transparent"}`,
+              }}
+            >
+              <div className="flex items-center gap-2 text-[8.5px] tracking-[0.12em]">
+                <span
+                  className="border px-1 py-px font-bold"
+                  style={{ color: CAT_COLOR[e.category], borderColor: `${CAT_COLOR[e.category]}66` }}
+                >
+                  {CAT_SHORT[e.category]}
+                </span>
+                <span className="font-bold" style={{ color: SEV_COLOR[e.severity] }}>
+                  {e.severity}
+                </span>
+                <span className="ml-auto tabular-nums text-wv-muted">{ago(e.time)}</span>
+              </div>
+              <div className="mt-1 text-[11px] font-semibold leading-snug text-wv-text/90 group-hover:text-wv-text">
+                {e.title}
+              </div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[8.5px] text-wv-muted">
+                <span>{e.domain}</span>
+                {e.place && (
+                  <span style={{ color: CAT_COLOR[e.category] }}>· {e.place}</span>
+                )}
+              </div>
+            </button>
+          );
+        })
       )}
 
       <div className="px-3 pt-2 text-[8.5px] leading-relaxed text-wv-muted/70">
-        GDELT conflict coverage · categories are keyword-classified · 24h window
+        Live news RSS · keyword-classified · tap an item to locate it on the globe
       </div>
     </div>
   );
