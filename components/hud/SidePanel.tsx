@@ -45,7 +45,7 @@ export default function SidePanel({
   }
 
   return (
-    <aside className="wv-panel-in hud-panel fixed left-0 top-14 bottom-0 z-40 flex w-[360px] flex-col border-l-0 border-b-0">
+    <aside className="wv-panel-in hud-panel fixed left-0 top-14 bottom-16 z-40 flex w-[360px] flex-col border-l-0 border-b-0">
       {/* tab row */}
       <div className="flex items-stretch border-b border-wv-border">
         {TABS.map((t) => {

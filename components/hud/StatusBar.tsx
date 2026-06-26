@@ -9,7 +9,7 @@ function fmt(n: number, axis: "lat" | "lon") {
   return `${Math.abs(n).toFixed(3)}°${hemi}`;
 }
 
-/** One metric cell: tiny muted label over a colored value. */
+/** One metric cell: small muted label over a colored value; flexes to fill. */
 function Cell({
   label,
   value,
@@ -22,10 +22,10 @@ function Cell({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col justify-center px-3 py-1">
-      <span className="text-[8px] font-bold tracking-[0.16em] text-wv-muted">{label}</span>
+    <div className="flex flex-1 flex-col justify-center gap-1 px-4 py-2.5">
+      <span className="text-[9px] font-bold tracking-[0.18em] text-wv-muted">{label}</span>
       {children ?? (
-        <span className="text-[12px] font-bold tabular-nums leading-tight" style={{ color }}>
+        <span className="text-[15px] font-bold tabular-nums leading-none" style={{ color }}>
           {value}
         </span>
       )}
@@ -37,7 +37,6 @@ export default function StatusBar() {
   const counts = useWorldView((s) => s.counts);
   const layers = useWorldView((s) => s.layers);
   const cursor = useWorldView((s) => s.cursor);
-  const sideOpen = useWorldView((s) => s.sideOpen);
 
   const [clock, setClock] = useState("––:––:––");
   useEffect(() => {
@@ -64,19 +63,16 @@ export default function StatusBar() {
   );
 
   return (
-    <div
-      className="hud-panel fixed bottom-3 z-40 flex items-stretch divide-x divide-wv-border overflow-hidden text-[10px]"
-      style={{ left: sideOpen ? 372 : 12 }}
-    >
+    <div className="hud-panel fixed bottom-2 left-2 right-2 z-40 flex items-stretch divide-x divide-wv-border overflow-hidden text-[10px]">
       <Cell label="ESCALATION INDEX">
         <div className="flex items-center gap-2">
           <span
-            className="text-[12px] font-bold tabular-nums"
+            className="text-[15px] font-bold tabular-nums leading-none"
             style={{ color: escalation > 66 ? "#ff414e" : escalation > 40 ? "#ffb347" : "#5dff9e" }}
           >
             {escalation}
           </span>
-          <span className="relative h-1.5 w-16 overflow-hidden rounded-full bg-white/10">
+          <span className="relative h-2 flex-1 overflow-hidden rounded-full bg-white/10">
             <span
               className="absolute inset-y-0 left-0 rounded-full"
               style={{
