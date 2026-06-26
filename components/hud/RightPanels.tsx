@@ -39,7 +39,7 @@ export default function RightPanels({
   return (
     <div
       key={open}
-      className="wv-panel-in hud-panel corner-ticks fixed right-3 top-[116px] bottom-16 z-40 flex w-80 flex-col"
+      className="wv-panel-in hud-panel corner-ticks fixed right-3 top-[116px] bottom-12 z-40 flex w-80 flex-col"
     >
       <div className="hud-panel-header flex items-center justify-between px-3 py-2">
         <span className="flex items-center gap-2 text-[11px] font-bold tracking-[0.2em] text-wv-text">
