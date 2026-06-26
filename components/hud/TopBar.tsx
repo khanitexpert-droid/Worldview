@@ -12,7 +12,7 @@ import LayerCategories from "./LayerCategories";
  */
 const TABS: { id: RightPanel; icon: string; label: string }[] = [
   { id: "intel", icon: "≣", label: "INTEL" },
-  { id: "userdata", icon: "⤓", label: "MY DATA" },
+  { id: "userdata", icon: "⤓", label: "ADD DATA" },
   { id: "tools", icon: "⚒", label: "TOOLS" },
 ];
 

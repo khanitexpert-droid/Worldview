@@ -7,7 +7,7 @@ import ToolsPanel from "./ToolsPanel";
 
 const META: Record<RightPanel, { icon: string; label: string }> = {
   intel: { icon: "≣", label: "INTEL FEED" },
-  userdata: { icon: "⤓", label: "MY DATA" },
+  userdata: { icon: "⤓", label: "ADD DATA" },
   tools: { icon: "⚒", label: "TOOLS" },
 };
 
