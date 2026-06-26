@@ -27,6 +27,39 @@ export interface SatMeta {
   live: boolean;
 }
 
+/**
+ * Strait of Hormuz dashboard state (WORLD EVENTS · Strait of Hormuz). The map
+ * sub-layers are toggles inside the HormuzPanel; the rest are vessel filters.
+ */
+export interface HormuzState {
+  // map sub-layers
+  crossings: boolean;
+  blockade: boolean;
+  incidents: boolean;
+  vulnerability: boolean;
+  // vessel filters
+  sanctionedOnly: boolean;
+  aisGap: boolean;
+  direction: "all" | "in" | "out";
+  riskHigh: boolean; // risk-tier pills (both off = all)
+  riskLow: boolean;
+  cargo: boolean; // ship-type pills (both off = all)
+  tanker: boolean;
+}
+export const HORMUZ_DEFAULT: HormuzState = {
+  crossings: true,
+  blockade: false,
+  incidents: false,
+  vulnerability: false,
+  sanctionedOnly: false,
+  aisGap: false,
+  direction: "all",
+  riskHigh: false,
+  riskLow: false,
+  cargo: false,
+  tanker: false,
+};
+
 interface WorldViewState {
   layers: Record<LayerId, boolean>;
   toggleLayer: (id: LayerId) => void;
@@ -89,6 +122,23 @@ interface WorldViewState {
   toggleUserLayer: (id: string) => void;
   setUserLayerOpacity: (id: string, opacity: number) => void;
   setUserLayerColor: (id: string, color: string) => void;
+
+  // ---- Strait of Hormuz dashboard (WORLD EVENTS · hormuz) ----
+  hormuz: HormuzState;
+  setHormuz: (patch: Partial<HormuzState>) => void;
+  resetHormuz: () => void;
+  hormuzStats: HormuzStats | null;
+  setHormuzStats: (s: HormuzStats | null) => void;
+}
+
+/** Live tallies for the Hormuz filter panel header (set by the renderer). */
+export interface HormuzStats {
+  total: number;
+  shown: number;
+  sanctioned: number;
+  aisGap: number;
+  inb: number;
+  outb: number;
 }
 
 const initialLayers = Object.fromEntries(
@@ -184,6 +234,12 @@ export const useWorldView = create<WorldViewState>((set) => ({
     set((s) => ({
       userLayers: s.userLayers.map((l) => (l.id === id ? { ...l, color } : l)),
     })),
+
+  hormuz: HORMUZ_DEFAULT,
+  setHormuz: (patch) => set((s) => ({ hormuz: { ...s.hormuz, ...patch } })),
+  resetHormuz: () => set({ hormuz: HORMUZ_DEFAULT }),
+  hormuzStats: null,
+  setHormuzStats: (s) => set({ hormuzStats: s }),
 }));
 
 // dev-only handle for debugging/verification (stripped from production bundles)

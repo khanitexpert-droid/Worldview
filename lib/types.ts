@@ -23,7 +23,8 @@ export type LayerId =
   | "gdp"
   // ---- WORLD EVENTS group ----
   | "wevents"
-  | "conflicts";
+  | "conflicts"
+  | "hormuz";
 
 /**
  * INFRA point layers — every one is a fixed geolocated site, so they all share
@@ -414,6 +415,69 @@ export interface Conflict {
   url?: string;
 }
 
+/** A live AIS vessel crossing the Strait of Hormuz (WORLD EVENTS · hormuz). */
+export interface HormuzVessel {
+  id: string;
+  name: string;
+  lon: number;
+  lat: number;
+  vtype: string; // "CARGO" | "TANKER" | …
+  flag?: string;
+  destination?: string;
+  asOf?: number; // epoch ms of the AIS fix
+  imo?: number;
+  mmsi?: string;
+  speed?: number; // knots
+  course?: number; // deg
+  direction: "in" | "out"; // inbound to / outbound from the Gulf
+  riskTier: "High" | "Low";
+  sanctioned: boolean;
+  aisGap: boolean;
+}
+
+/** A curated maritime incident in/around the Strait of Hormuz. */
+export interface HormuzIncident {
+  id: string;
+  name: string;
+  lon: number;
+  lat: number;
+  time: number; // epoch ms
+  itype: string; // "Seizure" | "Attack" | "Drone Strike" | …
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  actors?: string;
+  location?: string;
+  source: string;
+  url: string;
+  note?: string;
+}
+
+/** A country's oil-supply vulnerability to a Hormuz closure (choropleth). */
+export interface HormuzVuln {
+  id: string; // ISO-A3
+  name: string;
+  lon: number; // centroid
+  lat: number;
+  polygons: number[][][]; // rings for the choropleth fill
+  cls: "Most vulnerable" | "Vulnerable" | "Moderate" | "Low";
+  meOilShare: string; // e.g. "99.6%"
+  strategicReserve: string; // e.g. "0 days"
+  gdpCapita: number;
+  oilConsumption: string; // e.g. "424 kb/d"
+}
+
+/** The Strait of Hormuz blockade/chokepoint zone polygon. */
+export interface HormuzZone {
+  id: string;
+  name: string;
+  lon: number;
+  lat: number;
+  ztype: string;
+  area: string;
+  narrowest: string;
+  note?: string;
+  paths: number[][]; // single ring [ [lon,lat], … ]
+}
+
 /** One country's GDP-per-capita value for the choropleth layer. */
 export interface GdpDatum {
   id: string; // ISO-A3
@@ -440,6 +504,11 @@ export type FeedEntity =
   // ---- WORLD EVENTS ----
   | ({ kind: "wevents" } & IntelEvent)
   | ({ kind: "conflicts" } & Conflict)
+  // ---- Strait of Hormuz dashboard ----
+  | ({ kind: "hormuzVessel" } & HormuzVessel)
+  | ({ kind: "hormuzIncident" } & HormuzIncident)
+  | ({ kind: "hormuzVuln" } & HormuzVuln)
+  | ({ kind: "hormuzZone" } & HormuzZone)
   // ---- INFRA ----
   | ({ kind: InfraPointKind } & InfraSite)
   | ({ kind: InfraLineKind } & InfraLine)

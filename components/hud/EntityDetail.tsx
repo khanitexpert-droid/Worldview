@@ -104,6 +104,14 @@ function NavyExtras({ ship }: { ship: Extract<FeedEntity, { kind: "navyShips" }>
   );
 }
 
+// header meta for the Strait of Hormuz entities (they aren't layers).
+const HORMUZ_META: Record<string, { icon: string; label: string; color: string }> = {
+  hormuzVessel: { icon: "⛴", label: "VESSEL", color: "#00e5ff" },
+  hormuzIncident: { icon: "⚠", label: "INCIDENT", color: "#ff5630" },
+  hormuzVuln: { icon: "◍", label: "HORMUZ VULNERABILITY", color: "#e0294a" },
+  hormuzZone: { icon: "▦", label: "BLOCKADE ZONE", color: "#e0294a" },
+};
+
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-3 py-0.5">
@@ -409,6 +417,63 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
       ];
       return { title: e.name, rows };
     }
+    case "hormuzVessel": {
+      const statusBits = [
+        e.direction === "in" ? "INBOUND" : "OUTBOUND",
+        e.vtype,
+        e.flag,
+        e.sanctioned ? "⚠ SANCTIONED" : null,
+      ].filter(Boolean);
+      const rows: [string, React.ReactNode][] = [
+        ["TYPE", e.vtype],
+        ["STATUS", <span style={{ color: "#00e5ff" }}>{statusBits.join(" • ")}</span>],
+        ["LOCATION", "Strait of Hormuz"],
+      ];
+      if (e.destination) rows.push(["DESTINATION", e.destination]);
+      if (e.asOf) rows.push(["AS OF", new Date(e.asOf).toISOString().slice(0, 16).replace("T", " ") + "Z"]);
+      if (e.imo) rows.push(["IMO", String(e.imo)]);
+      if (e.mmsi) rows.push(["MMSI", e.mmsi]);
+      if (e.speed != null && e.course != null)
+        rows.push(["SPEED / COURSE", `${e.speed.toFixed(1)} kn · ${Math.round(e.course)}°`]);
+      rows.push(["RISK TIER", <span style={{ color: e.riskTier === "High" ? "#ff5630" : "#5dff9e" }}>{e.riskTier}</span>]);
+      if (e.sanctioned) rows.push(["SANCTION", <span style={{ color: "#ff2d95" }}>SANCTIONED</span>]);
+      return { title: e.name, rows };
+    }
+    case "hormuzIncident": {
+      const sevColor =
+        e.severity === "CRITICAL" ? "#ff2d6a" : e.severity === "HIGH" ? "#ff5630" : e.severity === "MEDIUM" ? "#ffb347" : "#9aa5b1";
+      const rows: [string, React.ReactNode][] = [
+        ["TYPE", e.itype],
+        ["SEVERITY", <span style={{ color: sevColor }}>{e.severity}</span>],
+      ];
+      if (e.actors) rows.push(["ACTORS", e.actors]);
+      if (e.location) rows.push(["LOCATION", e.location]);
+      rows.push(["SOURCE", e.source], ["TIME", timeAgo(e.time)]);
+      return { title: e.name, rows };
+    }
+    case "hormuzVuln": {
+      const clsColor =
+        e.cls === "Most vulnerable" ? "#e0294a" : e.cls === "Vulnerable" ? "#ff9e3c" : e.cls === "Moderate" ? "#ffd23c" : "#5dd6a0";
+      return {
+        title: e.name,
+        rows: [
+          ["CLASS", <span style={{ color: clsColor }}>{e.cls}</span>],
+          ["MIDDLE EAST OIL SHARE", e.meOilShare],
+          ["STRATEGIC RESERVE", e.strategicReserve],
+          ["GDP / CAPITA", `$${e.gdpCapita.toLocaleString()}`],
+          ["OIL CONSUMPTION", e.oilConsumption],
+        ],
+      };
+    }
+    case "hormuzZone":
+      return {
+        title: e.name,
+        rows: [
+          ["TYPE", e.ztype],
+          ["AREA", <span style={{ color: "#e0294a" }}>{e.area}</span>],
+          ["NARROWEST", e.narrowest],
+        ],
+      };
   }
 }
 
@@ -438,7 +503,17 @@ export default function EntityBody({
     );
   }
 
-  const meta = LAYER_BY_ID[selected.kind];
+  // Hormuz dashboard entities aren't layers (no LAYER_BY_ID entry) → fall back
+  // to a small per-kind header map.
+  const meta = ((LAYER_BY_ID as Record<string, { icon: string; label: string; color: string; group?: string; source?: string }>)[
+    selected.kind
+  ] ?? HORMUZ_META[selected.kind]) as {
+    icon: string;
+    label: string;
+    color: string;
+    group?: string;
+    source?: string;
+  };
   const { title, rows } = fields(selected);
   const e = selected as unknown as { lon: number; lat: number; altKm?: number };
   // bases get a branch-specific header + accent (army/naval/air); everything
@@ -518,8 +593,10 @@ export default function EntityBody({
           </>
         )}
 
-        {/* strike / event description + source link (deltasweep VIEW SOURCE) */}
-        {(selected.kind === "strikes" || selected.kind === "wevents") && (
+        {/* strike / event / incident description + source link (VIEW SOURCE) */}
+        {(selected.kind === "strikes" ||
+          selected.kind === "wevents" ||
+          selected.kind === "hormuzIncident") && (
           <>
             {selected.note && (
               <p className="mt-2 text-[10px] leading-relaxed text-wv-text/75">
@@ -544,6 +621,38 @@ export default function EntityBody({
           <p className="mt-2 text-[10px] leading-relaxed text-wv-text/75">
             WRI Aqueduct 4.0 — aggregated baseline water risk (physical quantity &
             quality + regulatory/reputational), HydroSHEDS L6 basin.
+          </p>
+        )}
+
+        {/* Hormuz vessel — AIS note + MarineTraffic link */}
+        {selected.kind === "hormuzVessel" && (
+          <>
+            <p className="mt-2 text-[9px] text-wv-muted">AIS vessel data.</p>
+            {selected.mmsi && (
+              <a
+                href={`https://www.marinetraffic.com/en/ais/details/ships/mmsi:${selected.mmsi}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 block border border-wv-border py-1.5 text-center text-[10px] font-bold tracking-[0.16em] text-wv-text transition-colors hover:border-wv-cyan hover:text-wv-cyan hover:box-glow-cyan"
+              >
+                MarineTraffic →
+              </a>
+            )}
+          </>
+        )}
+
+        {/* Hormuz vulnerability provenance footer */}
+        {selected.kind === "hormuzVuln" && (
+          <p className="mt-2 text-[10px] leading-relaxed text-wv-text/75">
+            Oil-supply vulnerability typology (ME import dependence, strategic
+            reserve, Hormuz reliance & GDP/capita). Curated overview.
+          </p>
+        )}
+
+        {/* Hormuz blockade-zone note */}
+        {selected.kind === "hormuzZone" && selected.note && (
+          <p className="mt-2 text-[10px] leading-relaxed text-wv-text/75">
+            {selected.note}
           </p>
         )}
 

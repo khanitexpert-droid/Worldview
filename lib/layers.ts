@@ -120,6 +120,18 @@ export const LAYERS: LayerMeta[] = [
     defaultOn: false,
   },
   {
+    id: "hormuz",
+    label: "Strait of Hormuz",
+    short: "SOH",
+    icon: "⚓",
+    color: "#ffb347",
+    source: "LIVE AIS + OSINT",
+    group: "WORLD EVENTS",
+    info: "Strait of Hormuz live-crossings dashboard — vessel traffic (live AIS), a blockade/chokepoint zone, maritime incidents, and oil-supply vulnerability by country. Opens a filter panel; ~20% of global oil & LNG transits here.",
+    defaultOn: false,
+    noCount: true,
+  },
+  {
     id: "events",
     label: "Global News",
     short: "NEWS",

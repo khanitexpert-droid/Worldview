@@ -13,6 +13,8 @@ import type {
   WaterRisk,
   IntelEvent,
   Conflict,
+  HormuzIncident,
+  HormuzVuln,
 } from "./types";
 
 export interface SatellitesResponse {
@@ -107,3 +109,7 @@ export const fetchWorldEvents = () =>
   staticInfra<IntelEvent>("/world_events.json", "CURATED · OSINT");
 export const fetchConflicts = () =>
   staticInfra<Conflict>("/conflicts.json", "CURATED · OSINT");
+export const fetchHormuzIncidents = () =>
+  staticInfra<HormuzIncident>("/hormuz_incidents.json", "CURATED · OSINT");
+export const fetchHormuzVuln = () =>
+  staticInfra<HormuzVuln>("/hormuz_vulnerability.json", "CURATED");

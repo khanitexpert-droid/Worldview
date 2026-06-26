@@ -6,6 +6,7 @@ import "cesium/Build/Cesium/Widgets/widgets.css";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWorldView } from "@/lib/store";
+import type { HormuzState, HormuzStats } from "@/lib/store";
 import { LAYERS, LAYER_BY_ID } from "@/lib/layers";
 import {
   fetchBases,
@@ -33,6 +34,8 @@ import {
   fetchMajorRivers,
   fetchWorldEvents,
   fetchConflicts,
+  fetchHormuzIncidents,
+  fetchHormuzVuln,
 } from "@/lib/feeds";
 import type {
   Flight,
@@ -49,6 +52,9 @@ import type {
   WaterRisk,
   IntelEvent,
   Conflict,
+  HormuzVessel,
+  HormuzIncident,
+  HormuzVuln,
 } from "@/lib/types";
 import { SatelliteField } from "@/lib/satField";
 import { EventFx } from "@/lib/eventFx";
@@ -72,6 +78,7 @@ import SearchBar from "./hud/SearchBar";
 import SelectedPopup from "./hud/SelectedPopup";
 import ActivityPopup from "./hud/ActivityPopup";
 import LandCoverLegend from "./hud/LandCoverLegend";
+import HormuzPanel from "./hud/HormuzPanel";
 import { createShipDensityProvider } from "@/lib/shipDensity";
 
 // ---- palette ----
@@ -177,7 +184,7 @@ const EVENT_STAR_IMAGE = `data:image/svg+xml,${encodeURIComponent(EVENT_STAR_SVG
 // opt out of the generic poll/render pipeline entirely.
 type PollLayerId = Exclude<
   LayerId,
-  "satellites" | "photoreal" | "bathymetry" | "shippingRoutes" | "landcover"
+  "satellites" | "photoreal" | "bathymetry" | "shippingRoutes" | "landcover" | "hormuz"
 >;
 
 // colors cycled through for each imported user layer (MY DATA)
@@ -415,6 +422,168 @@ function conflictColor(intensity: string): Cesium.Color {
   if (/high/i.test(intensity)) return Cesium.Color.fromCssColorString("#e0294a");
   if (/low/i.test(intensity)) return Cesium.Color.fromCssColorString("#ffb347");
   return Cesium.Color.fromCssColorString("#ff5630"); // Active / default
+}
+
+// ---- Strait of Hormuz dashboard helpers ----
+// blockade/chokepoint band across the strait (lon,lat ring).
+const HORMUZ_ZONE: import("@/lib/types").HormuzZone = {
+  id: "soh",
+  name: "Strait of Hormuz",
+  lon: 56.4,
+  lat: 26.4,
+  ztype: "Waterways",
+  area: "4,144 km² · 1,208 nmi²",
+  narrowest: "~34 km (21 mi)",
+  note: "Strait of Hormuz crossing/blockade zone. ~20% of global oil & LNG transits here.",
+  paths: [
+    [55.9, 26.95],
+    [56.35, 27.15],
+    [57.15, 25.75],
+    [56.7, 25.6],
+  ],
+};
+const SANCTIONED_FLAGS = new Set(["Iran", "Russia", "North Korea", "Syria", "Venezuela"]);
+function vulnClassColor(cls: string): Cesium.Color {
+  if (cls === "Most vulnerable") return Cesium.Color.fromCssColorString("#e0294a");
+  if (cls === "Vulnerable") return Cesium.Color.fromCssColorString("#ff9e3c");
+  if (cls === "Moderate") return Cesium.Color.fromCssColorString("#ffd23c");
+  return Cesium.Color.fromCssColorString("#5dd6a0"); // Low
+}
+// map live AIS ships (within the Gulf/Strait/Gulf of Oman) → HormuzVessel[].
+function toHormuzVessels(ships: Ship[]): HormuzVessel[] {
+  const out: HormuzVessel[] = [];
+  for (const s of ships) {
+    if (s.lon < 47 || s.lon > 61 || s.lat < 22 || s.lat > 30.5) continue;
+    const course = s.heading ?? 0;
+    const inbound = (course >= 200 && course <= 360) || (course >= 0 && course <= 40);
+    const vtype = (s.type || "VESSEL").toUpperCase();
+    const sanctioned = !!(s.flag && SANCTIONED_FLAGS.has(s.flag));
+    const aisGap = s.timePosition ? Date.now() - s.timePosition > 3_600_000 : true;
+    out.push({
+      id: s.id,
+      name: s.name || "VESSEL",
+      lon: s.lon,
+      lat: s.lat,
+      vtype,
+      flag: s.flag,
+      destination: s.destination,
+      asOf: s.timePosition,
+      imo: s.imo,
+      mmsi: s.id,
+      speed: s.speed,
+      course: s.heading,
+      direction: inbound ? "in" : "out",
+      riskTier: sanctioned || vtype === "TANKER" ? "High" : "Low",
+      sanctioned,
+      aisGap,
+    });
+  }
+  return out;
+}
+// render the active Hormuz sub-layers + set the panel's live stats.
+function renderHormuz(
+  ds: Cesium.CustomDataSource,
+  sel: SelMap,
+  data: { vessels: HormuzVessel[]; incidents: HormuzIncident[]; vuln: HormuzVuln[] },
+  hf: HormuzState,
+  setStats: (s: HormuzStats | null) => void
+) {
+  ds.entities.removeAll();
+
+  // ---- Vulnerability choropleth (drawn first, under everything) ----
+  if (hf.vulnerability) {
+    for (const c of data.vuln) {
+      const fill = vulnClassColor(c.cls);
+      let i = 0;
+      for (const ring of c.polygons || []) {
+        if (!ring || ring.length < 3) continue;
+        const eid = `hormuzVuln:${c.id}:${i++}`;
+        ds.entities.add({
+          id: eid,
+          polygon: {
+            hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(ring.flat())),
+            material: fill.withAlpha(0.42),
+            outline: false,
+          },
+        });
+        sel.set(eid, { kind: "hormuzVuln", ...c });
+      }
+    }
+  }
+
+  // ---- Blockade Zone ----
+  if (hf.blockade) {
+    const eid = "hormuzZone:soh";
+    ds.entities.add({
+      id: eid,
+      polygon: {
+        hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(HORMUZ_ZONE.paths.flat())),
+        material: Cesium.Color.fromCssColorString("#e0294a").withAlpha(0.28),
+        outline: true,
+        outlineColor: Cesium.Color.fromCssColorString("#e0294a").withAlpha(0.7),
+      },
+    });
+    sel.set(eid, { kind: "hormuzZone", ...HORMUZ_ZONE });
+  }
+
+  // ---- Incidents ----
+  if (hf.incidents) {
+    for (const inc of data.incidents) {
+      const eid = `hormuzIncident:${inc.id}`;
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(inc.lon, inc.lat, 0),
+        point: {
+          pixelSize: 10,
+          color: Cesium.Color.fromCssColorString("#ff5630").withAlpha(0.9),
+          outlineColor: Cesium.Color.fromCssColorString("#2a0008"),
+          outlineWidth: 1,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.1, 2.6e7, 0.5),
+        },
+      });
+      sel.set(eid, { kind: "hormuzIncident", ...inc });
+    }
+  }
+
+  // ---- Crossings (live AIS) + stats ----
+  const all = data.vessels;
+  let v = all;
+  if (hf.sanctionedOnly) v = v.filter((x) => x.sanctioned);
+  if (hf.aisGap) v = v.filter((x) => x.aisGap);
+  if (hf.direction !== "all") v = v.filter((x) => x.direction === hf.direction);
+  if (hf.riskHigh !== hf.riskLow) v = v.filter((x) => (hf.riskHigh ? x.riskTier === "High" : x.riskTier === "Low"));
+  if (hf.cargo !== hf.tanker) v = v.filter((x) => (hf.cargo ? x.vtype === "CARGO" : x.vtype === "TANKER"));
+
+  if (hf.crossings) {
+    const inC = Cesium.Color.fromCssColorString("#5dff9e");
+    const outC = Cesium.Color.fromCssColorString("#ff5630");
+    const sanctC = Cesium.Color.fromCssColorString("#ff2d95");
+    for (const x of v) {
+      const eid = `hormuzVessel:${x.id}`;
+      if (ds.entities.getById(eid)) continue;
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(x.lon, x.lat, 0),
+        point: {
+          pixelSize: 6,
+          color: (x.direction === "in" ? inC : outC).withAlpha(0.9),
+          outlineColor: x.sanctioned ? sanctC : Cesium.Color.fromCssColorString("#0b0612"),
+          outlineWidth: x.sanctioned ? 1.6 : 0.6,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.15, 4.0e7, 0.35),
+        },
+      });
+      sel.set(eid, { kind: "hormuzVessel", ...x });
+    }
+  }
+
+  setStats({
+    total: all.length,
+    shown: hf.crossings ? v.length : 0,
+    sanctioned: all.filter((x) => x.sanctioned).length,
+    aisGap: all.filter((x) => x.aisGap).length,
+    inb: all.filter((x) => x.direction === "in").length,
+    outb: all.filter((x) => x.direction === "out").length,
+  });
 }
 
 // live state for one aircraft. We keep a "truth" target (tLon/tLat/tAlt) that
@@ -825,6 +994,8 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const shipRoutesLayerRef = useRef<Cesium.ImageryLayer | null>(null);
   // ---- land cover (ESA WorldCover WMTS) imagery layer, lazily created ----
   const landCoverLayerRef = useRef<Cesium.ImageryLayer | null>(null);
+  // ---- Strait of Hormuz dashboard datasource ----
+  const hormuzDsRef = useRef<Cesium.CustomDataSource | null>(null);
   // ---- Google Photorealistic 3D Tiles (lazy-created scene primitive) ----
   const tilesetRef = useRef<Cesium.Cesium3DTileset | null>(null);
   const photorealLoadingRef = useRef(false);
@@ -845,6 +1016,12 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const [dragActive, setDragActive] = useState(false);
   // hover tooltip for the Major Rivers layer (river name follows the cursor)
   const [riverTip, setRiverTip] = useState<{ name: string; x: number; y: number } | null>(null);
+  // Strait of Hormuz dashboard data (live AIS vessels + curated incidents/vuln)
+  const [hormuzData, setHormuzData] = useState<{
+    vessels: HormuzVessel[];
+    incidents: HormuzIncident[];
+    vuln: HormuzVuln[];
+  }>({ vessels: [], incidents: [], vuln: [] });
 
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Record<LayerId, unknown[]>>({
@@ -880,6 +1057,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     // WORLD EVENTS
     wevents: [],
     conflicts: [],
+    hormuz: [], // custom-rendered dashboard, not a generic feed
   });
 
   const layers = useWorldView((s) => s.layers);
@@ -889,6 +1067,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const bathymetry = useWorldView((s) => s.layers.bathymetry);
   const shippingRoutes = useWorldView((s) => s.layers.shippingRoutes);
   const landcover = useWorldView((s) => s.layers.landcover);
+  const hormuzOn = useWorldView((s) => s.layers.hormuz);
+  const hormuzFilters = useWorldView((s) => s.hormuz);
+  const setHormuzStats = useWorldView((s) => s.setHormuzStats);
   const photoreal = useWorldView((s) => s.layers.photoreal);
   const userLayers = useWorldView((s) => s.userLayers);
   const addUserLayer = useWorldView((s) => s.addUserLayer);
@@ -1979,6 +2160,51 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     if (landCoverLayerRef.current) landCoverLayerRef.current.show = landcover;
   }, [landcover, ready]);
 
+  // ---- Strait of Hormuz: load data when the layer turns on (live AIS polled,
+  // curated incidents/vulnerability once). AIS may be unavailable → empty. ----
+  useEffect(() => {
+    if (!ready) return;
+    const viewer = viewerRef.current;
+    if (viewer && !hormuzDsRef.current) {
+      hormuzDsRef.current = new Cesium.CustomDataSource("hormuz");
+      viewer.dataSources.add(hormuzDsRef.current);
+    }
+    if (!hormuzOn) return;
+    let cancelled = false;
+    (async () => {
+      const [inc, vuln] = await Promise.all([fetchHormuzIncidents(), fetchHormuzVuln()]);
+      if (!cancelled) setHormuzData((d) => ({ ...d, incidents: inc.items, vuln: vuln.items }));
+    })();
+    const loadAis = async () => {
+      try {
+        const s = await fetchShips();
+        if (!cancelled) setHormuzData((d) => ({ ...d, vessels: toHormuzVessels(s.items) }));
+      } catch {
+        /* AIS relay unavailable → leave vessels empty */
+      }
+    };
+    loadAis();
+    const iv = setInterval(loadAis, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [hormuzOn, ready]);
+
+  // ---- Strait of Hormuz: (re)render the active sub-layers + panel stats ----
+  useEffect(() => {
+    const ds = hormuzDsRef.current;
+    if (!ds || !ready) return;
+    for (const k of [...selMapRef.current.keys()])
+      if (k.startsWith("hormuz")) selMapRef.current.delete(k);
+    if (!hormuzOn) {
+      ds.entities.removeAll();
+      setHormuzStats(null);
+      return;
+    }
+    renderHormuz(ds, selMapRef.current, hormuzData, hormuzFilters, setHormuzStats);
+  }, [hormuzOn, hormuzFilters, hormuzData, ready, setHormuzStats]);
+
   // ---- world events: stream headlines to intel + drive the breaking-news radar ----
   useEffect(() => {
     if (!ready || !layers.events) return;
@@ -2234,6 +2460,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       <SelectedPopup onFlyTo={flyTo} />
       <ActivityPopup />
       <LandCoverLegend />
+      <HormuzPanel />
       {riverTip && (
         <div
           className="hud-panel pointer-events-none absolute z-40 whitespace-nowrap px-2 py-1 text-[11px] font-semibold text-wv-text"
