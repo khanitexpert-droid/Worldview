@@ -20,7 +20,10 @@ export type LayerId =
   // ---- INFRA group (deltasweep parity) ----
   | InfraPointKind
   | InfraLineKind
-  | "gdp";
+  | "gdp"
+  // ---- WORLD EVENTS group ----
+  | "wevents"
+  | "conflicts";
 
 /**
  * INFRA point layers — every one is a fixed geolocated site, so they all share
@@ -370,6 +373,47 @@ export interface WaterRisk {
   country?: string;
 }
 
+/**
+ * A WORLD EVENTS · Events item — a significant recent intel/kinetic event,
+ * plotted at its location with a rich card (deltasweep-style). Curated from
+ * current reporting; not a live social-OSINT scrape.
+ */
+export interface IntelEvent {
+  id: string;
+  name: string; // headline
+  lon: number;
+  lat: number;
+  time: number; // epoch ms
+  etype: string; // "Kinetic Strike" | "Naval Incident" | "Airstrike" …
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  confidence: string; // "Unverified" | "Probable" | "Confirmed"
+  theater?: string; // e.g. "Iran, Strait of Hormuz, UAE"
+  actors?: string; // e.g. "IRGC, US CENTCOM"
+  location?: string; // place label
+  source: string; // outlet
+  url: string; // VIEW SOURCE
+  country?: string;
+  note?: string; // description / detail
+}
+
+/**
+ * A WORLD EVENTS · World Conflicts item — a curated ongoing armed conflict,
+ * plotted at its centroid with a // CONFLICT card (deltasweep-style).
+ */
+export interface Conflict {
+  id: string;
+  name: string; // e.g. "Israel–Hezbollah" / "Sudan Civil War"
+  lon: number;
+  lat: number;
+  ctype: string; // "War / interstate" | "Civil war" | "Insurgency" …
+  parties: string; // e.g. "Israel vs. Hezbollah" / "SAF vs RSF"
+  since: string; // start year
+  intensity: string; // "Active" | "High intensity" | "Low intensity"
+  note?: string; // description
+  country?: string;
+  url?: string;
+}
+
 /** One country's GDP-per-capita value for the choropleth layer. */
 export interface GdpDatum {
   id: string; // ISO-A3
@@ -393,6 +437,9 @@ export type FeedEntity =
   // ---- ENVIRO ----
   | ({ kind: "waterstress" } & WaterRisk)
   | ({ kind: "majorrivers" } & InfraLine)
+  // ---- WORLD EVENTS ----
+  | ({ kind: "wevents" } & IntelEvent)
+  | ({ kind: "conflicts" } & Conflict)
   // ---- INFRA ----
   | ({ kind: InfraPointKind } & InfraSite)
   | ({ kind: InfraLineKind } & InfraLine)

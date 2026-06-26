@@ -381,6 +381,34 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
       if (e.country) rows.push(["REGION", e.country]);
       return { title: e.name, rows };
     }
+    case "wevents": {
+      const sevColor =
+        e.severity === "CRITICAL" ? "#ff2d6a" : e.severity === "HIGH" ? "#ff5630" : e.severity === "MEDIUM" ? "#ffb347" : "#9aa5b1";
+      const rows: [string, React.ReactNode][] = [
+        ["TYPE", e.etype],
+        ["SEVERITY", <span style={{ color: sevColor }}>{e.severity}</span>],
+        ["CONFIDENCE", e.confidence],
+      ];
+      if (e.theater) rows.push(["THEATER", e.theater]);
+      if (e.actors) rows.push(["ACTORS", e.actors]);
+      if (e.location) rows.push(["LOCATION", e.location]);
+      rows.push(["SOURCE", e.source], ["TIME", timeAgo(e.time)]);
+      return { title: e.name, rows };
+    }
+    case "conflicts": {
+      const intColor = /high/i.test(e.intensity)
+        ? "#e0294a"
+        : /low/i.test(e.intensity)
+          ? "#ffb347"
+          : "#ff5630";
+      const rows: [string, React.ReactNode][] = [
+        ["TYPE", <span style={{ color: "#ff7a3c" }}>{e.ctype}</span>],
+        ["PARTIES", e.parties],
+        ["SINCE", e.since],
+        ["INTENSITY", <span style={{ color: intColor }}>{e.intensity}</span>],
+      ];
+      return { title: e.name, rows };
+    }
   }
 }
 
@@ -476,8 +504,22 @@ export default function EntityBody({
           </>
         )}
 
-        {/* strike description + source link (deltasweep VIEW SOURCE) */}
-        {selected.kind === "strikes" && (
+        {/* curated conflict description + "for live data" footer */}
+        {selected.kind === "conflicts" && (
+          <>
+            {selected.note && (
+              <p className="mt-2 text-[10px] leading-relaxed text-wv-text/75">
+                {selected.note}
+              </p>
+            )}
+            <p className="mt-2 text-[9px] text-wv-muted">
+              Curated conflict overview. For live event data, use the Events layer.
+            </p>
+          </>
+        )}
+
+        {/* strike / event description + source link (deltasweep VIEW SOURCE) */}
+        {(selected.kind === "strikes" || selected.kind === "wevents") && (
           <>
             {selected.note && (
               <p className="mt-2 text-[10px] leading-relaxed text-wv-text/75">

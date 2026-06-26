@@ -31,6 +31,8 @@ import {
   fetchStrikes,
   fetchWaterStress,
   fetchMajorRivers,
+  fetchWorldEvents,
+  fetchConflicts,
 } from "@/lib/feeds";
 import type {
   Flight,
@@ -45,6 +47,8 @@ import type {
   InfraLineKind,
   StrikeEvent,
   WaterRisk,
+  IntelEvent,
+  Conflict,
 } from "@/lib/types";
 import { SatelliteField } from "@/lib/satField";
 import { EventFx } from "@/lib/eventFx";
@@ -160,6 +164,14 @@ const STRIKE_SVG =
   "<circle cx='12' cy='12' r='2.6' fill='#ffd23c' stroke='#3a0500' stroke-width='0.5'/></svg>";
 const STRIKE_IMAGE = `data:image/svg+xml,${encodeURIComponent(STRIKE_SVG)}`;
 
+// WORLD EVENTS marker: a white 5-point star (tinted per severity) with a thin
+// dark outline so it reads against terrain (deltasweep-style event star).
+const EVENT_STAR_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
+  "<path d='M12 1.6 L15 8.7 L22.6 9.3 L16.8 14.3 L18.6 21.9 L12 17.8 L5.4 21.9 L7.2 14.3 L1.4 9.3 L9 8.7 Z' " +
+  "fill='#ffffff' stroke='#2a0008' stroke-width='0.6' stroke-linejoin='round'/></svg>";
+const EVENT_STAR_IMAGE = `data:image/svg+xml,${encodeURIComponent(EVENT_STAR_SVG)}`;
+
 // satellites are propagated client-side every frame by SatelliteField, and
 // photoreal is a scene-level toggle (Google 3D tiles), not a polled feed — both
 // opt out of the generic poll/render pipeline entirely.
@@ -213,6 +225,9 @@ const POLL_MS: Record<PollLayerId, number> = {
   // ENVIRO (vector layers; landcover is a separate imagery toggle)
   waterstress: 86_400_000,
   majorrivers: 86_400_000,
+  // WORLD EVENTS (curated static snapshots)
+  wevents: 86_400_000,
+  conflicts: 86_400_000,
 };
 
 const FETCHERS: Record<
@@ -241,6 +256,8 @@ const FETCHERS: Record<
   gdp: fetchGdp,
   waterstress: fetchWaterStress,
   majorrivers: fetchMajorRivers,
+  wevents: fetchWorldEvents,
+  conflicts: fetchConflicts,
 };
 
 // layers handled by the generic (snap-on-poll) renderer — flights and ships are
@@ -378,6 +395,26 @@ const WATER_BANDS = [
 ];
 function waterColor(score: number): Cesium.Color {
   return WATER_BANDS[Math.max(0, Math.min(4, Math.floor(score)))];
+}
+
+// WORLD EVENTS · event severity tint (LOW → CRITICAL).
+function eventSeverityColor(sev: string): Cesium.Color {
+  switch (sev) {
+    case "CRITICAL":
+      return Cesium.Color.fromCssColorString("#ff2d6a");
+    case "HIGH":
+      return Cesium.Color.fromCssColorString("#ff5630");
+    case "MEDIUM":
+      return Cesium.Color.fromCssColorString("#ffb347");
+    default:
+      return Cesium.Color.fromCssColorString("#9aa5b1");
+  }
+}
+// WORLD EVENTS · conflict intensity color.
+function conflictColor(intensity: string): Cesium.Color {
+  if (/high/i.test(intensity)) return Cesium.Color.fromCssColorString("#e0294a");
+  if (/low/i.test(intensity)) return Cesium.Color.fromCssColorString("#ffb347");
+  return Cesium.Color.fromCssColorString("#ff5630"); // Active / default
 }
 
 // live state for one aircraft. We keep a "truth" target (tLon/tLat/tAlt) that
@@ -674,6 +711,50 @@ function renderLayer(
     return;
   }
 
+  // ---- WORLD EVENTS · Events: severity-tinted star markers ----
+  if (id === "wevents") {
+    for (const e of items as IntelEvent[]) {
+      const eid = `wevents:${e.id}`;
+      if (ds.entities.getById(eid)) continue;
+      const size = e.severity === "CRITICAL" ? 30 : e.severity === "HIGH" ? 27 : 24;
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(e.lon, e.lat, 0),
+        billboard: {
+          image: EVENT_STAR_IMAGE,
+          color: eventSeverityColor(e.severity),
+          width: size,
+          height: size,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.05, 2.6e7, 0.42),
+        },
+      });
+      sel.set(eid, { kind: "wevents", ...e });
+    }
+    return;
+  }
+
+  // ---- WORLD EVENTS · World Conflicts: intensity-colored dots at centroids ----
+  if (id === "conflicts") {
+    for (const c of items as Conflict[]) {
+      const eid = `conflicts:${c.id}`;
+      if (ds.entities.getById(eid)) continue;
+      const col = conflictColor(c.intensity);
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(c.lon, c.lat, 0),
+        point: {
+          pixelSize: 12,
+          color: col.withAlpha(0.85),
+          outlineColor: col,
+          outlineWidth: 1.5,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.2, 5.0e7, 0.5),
+        },
+      });
+      sel.set(eid, { kind: "conflicts", ...c });
+    }
+    return;
+  }
+
   // ---- ENVIRO · Water Stress: choropleth basin polygons shaded by risk ----
   if (id === "waterstress") {
     for (const b of items as WaterRisk[]) {
@@ -796,6 +877,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     waterstress: [],
     majorrivers: [],
     landcover: [], // raster imagery toggle, never carries feed data
+    // WORLD EVENTS
+    wevents: [],
+    conflicts: [],
   });
 
   const layers = useWorldView((s) => s.layers);

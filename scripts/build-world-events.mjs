@@ -1,0 +1,53 @@
+// Build WORLD EVENTS · Events (public/world_events.json) — curated significant
+// recent intel/kinetic events with a rich card (deltasweep-style). Hard 60-day
+// cutoff so nothing older than ~2 months is shown. Refresh from current
+// reporting and re-run:  node scripts/build-world-events.mjs
+import { writeFile } from "node:fs/promises";
+
+const CUTOFF_DAYS = 60;
+const U = {
+  aj0608: "https://www.aljazeera.com/news/2026/6/8/israel-and-iran-exchange-attacks-as-ceasefire-falters",
+  aj0618: "https://www.aljazeera.com/news/2026/6/18/israeli-attacks-on-southern-lebanon-kill-three-despite-us-iran-deal",
+  aj0620: "https://www.aljazeera.com/news/2026/6/20/us-envoy-headed-for-switzerland-israeli-strikes-on-lebanon-threaten-talks",
+  cnn0525: "https://www.cnn.com/2026/05/25/world/live-news/iran-war-us-peace-deal",
+  npr0607: "https://www.npr.org/2026/06/07/nx-s1-5849220/israel-lebanon-beirut-airstrike-ceasefire",
+  alarabiya: "https://english.alarabiya.net/News/middle-east/2026/06/24/us-forces-killed-isis-leader-in-syria-airstrike-centcom-says",
+  lwj: "https://www.longwarjournal.org/archives/2026/06/houthis-attack-israel-and-announce-ban-on-israeli-vessels-in-the-red-sea.php",
+  wikiIran: "https://en.wikipedia.org/wiki/2026_Iran_war",
+};
+
+// {id,name,lat,lon,date,etype,severity,confidence,theater,actors,location,source,url,country,note}
+const E = [
+  { id: "we-hormuz-vessel", name: "Cargo vessel struck near Oman; UN pauses Hormuz evacuation", lat: 24.5, lon: 57.7, date: "2026-06-25", etype: "Naval Incident", severity: "CRITICAL", confidence: "Confirmed", theater: "Iran, Strait of Hormuz, Oman", actors: "Iran, IMO", location: "Gulf of Oman", source: "Wikipedia", url: U.wikiIran, country: "Oman", note: "A cargo vessel was hit by a projectile near Oman; the IMO paused its Strait of Hormuz evacuation plan." },
+  { id: "we-hormuz-irgc", name: "Reported kinetic strike in the Strait of Hormuz", lat: 26.5, lon: 56.5, date: "2026-06-24", etype: "Kinetic Strike", severity: "CRITICAL", confidence: "Probable", theater: "Iran, Strait of Hormuz, UAE", actors: "IRGC, US CENTCOM", location: "Strait of Hormuz", source: "Wikipedia", url: U.wikiIran, country: "Iran", note: "Reported exchange in the Strait of Hormuz amid the Hormuz transit dispute." },
+  { id: "we-aludeid", name: "Iran fires missiles at Al Udeid Air Base, Qatar", lat: 25.117, lon: 51.315, date: "2026-06-23", etype: "Missile Strike", severity: "HIGH", confidence: "Confirmed", theater: "Qatar, Persian Gulf", actors: "Iran, US CENTCOM", location: "Al Udeid Air Base", source: "Al Jazeera", url: U.aj0608, country: "Qatar", note: "Iranian missiles targeted the US base in Qatar; intercepted, no casualties." },
+  { id: "we-fordow", name: "US B-2 strike on Fordow enrichment plant", lat: 34.885, lon: 50.996, date: "2026-06-22", etype: "Kinetic Strike", severity: "CRITICAL", confidence: "Confirmed", theater: "Iran", actors: "US CENTCOM", location: "Fordow", source: "Wikipedia", url: U.wikiIran, country: "Iran", note: "B-2 bombers struck the deeply buried Fordow nuclear site." },
+  { id: "we-natanz", name: "US strike on Natanz nuclear site", lat: 33.72, lon: 51.73, date: "2026-06-22", etype: "Kinetic Strike", severity: "CRITICAL", confidence: "Confirmed", theater: "Iran", actors: "US CENTCOM", location: "Natanz", source: "Wikipedia", url: U.wikiIran, country: "Iran", note: "Part of the coordinated US strike on Iran's nuclear program." },
+  { id: "we-leb-0620", name: "Israeli strikes kill dozens in Lebanon amid truce talks", lat: 33.3, lon: 35.3, date: "2026-06-20", etype: "Airstrike", severity: "HIGH", confidence: "Confirmed", theater: "Lebanon", actors: "Israel, Hezbollah", location: "South Lebanon", source: "Al Jazeera", url: U.aj0620, country: "Lebanon", note: "Over 100 strikes on south Lebanon just after a renewed ceasefire was announced." },
+  { id: "we-syria-isis", name: "US airstrike kills ISIS leader in northwest Syria", lat: 36.05, lon: 36.55, date: "2026-06-19", etype: "Kinetic Strike", severity: "MEDIUM", confidence: "Confirmed", theater: "Syria", actors: "US CENTCOM, ISIS", location: "Idlib province", source: "Al Arabiya", url: U.alarabiya, country: "Syria", note: "CENTCOM strike killed senior ISIS figure Ali Husayn al-'Ulaywi." },
+  { id: "we-beersheba", name: "Iran missile hits near Soroka Hospital, Beersheba", lat: 31.26, lon: 34.8, date: "2026-06-19", etype: "Missile Strike", severity: "HIGH", confidence: "Confirmed", theater: "Israel", actors: "Iran", location: "Beersheba", source: "Al Jazeera", url: U.aj0608, country: "Israel", note: "A ballistic missile struck near the Soroka Medical Center." },
+  { id: "we-leb-0618", name: "Israeli strikes kill at least 47 in southern Lebanon", lat: 33.27, lon: 35.2, date: "2026-06-18", etype: "Airstrike", severity: "HIGH", confidence: "Confirmed", theater: "Lebanon", actors: "Israel, Hezbollah", location: "Tyre district", source: "Al Jazeera", url: U.aj0618, country: "Lebanon", note: "Intense strikes despite the US-Iran deal." },
+  { id: "we-haifa", name: "Iran missiles strike Haifa", lat: 32.79, lon: 34.99, date: "2026-06-15", etype: "Missile Strike", severity: "MEDIUM", confidence: "Confirmed", theater: "Israel", actors: "Iran", location: "Haifa", source: "Al Jazeera", url: U.aj0608, country: "Israel", note: "Missiles hit the Haifa bay industrial area." },
+  { id: "we-daqduq", name: "Israeli strike kills senior Hezbollah commander", lat: 33.3, lon: 35.3, date: "2026-06-14", etype: "Airstrike", severity: "MEDIUM", confidence: "Confirmed", theater: "Lebanon", actors: "Israel, Hezbollah", location: "South Lebanon", source: "Wikipedia", url: "https://en.wikipedia.org/wiki/Timeline_of_the_2026_Lebanon_war", country: "Lebanon", note: "Targeted strike killed commander Ali Musa Daqduq." },
+  { id: "we-eilat", name: "Houthi cruise missiles & drones target Eilat", lat: 29.55, lon: 34.95, date: "2026-06-09", etype: "Cruise Missile & Drone", severity: "MEDIUM", confidence: "Probable", theater: "Israel, Red Sea", actors: "Houthis", location: "Eilat", source: "FDD's Long War Journal", url: U.lwj, country: "Israel", note: "Houthis claimed strikes on Eilat; air defenses engaged." },
+  { id: "we-ramatdavid", name: "Iran ballistic barrage hits Ramat David airbase", lat: 32.665, lon: 35.18, date: "2026-06-08", etype: "Missile Strike", severity: "HIGH", confidence: "Confirmed", theater: "Israel", actors: "Iran", location: "Ramat David Airbase", source: "Al Jazeera", url: U.aj0608, country: "Israel", note: "Iranian barrage as the ceasefire faltered; the airbase was damaged." },
+  { id: "we-tehran", name: "Israeli airstrikes across Tehran", lat: 35.7, lon: 51.42, date: "2026-06-08", etype: "Airstrike", severity: "HIGH", confidence: "Confirmed", theater: "Iran", actors: "Israel", location: "Tehran", source: "Al Jazeera", url: U.aj0608, country: "Iran", note: "Explosions reported in Tehran, Isfahan and Tabriz." },
+  { id: "we-houthi-tlv", name: "Houthi missile & drone barrage on Tel Aviv area", lat: 32.08, lon: 34.78, date: "2026-06-08", etype: "Missile & Drone", severity: "MEDIUM", confidence: "Probable", theater: "Israel, Red Sea", actors: "Houthis", location: "Tel Aviv", source: "FDD's Long War Journal", url: U.lwj, country: "Israel", note: "Houthis fired at the Tel Aviv area in coordination with Iran." },
+  { id: "we-dahieh", name: "Israel strikes Beirut's southern suburbs", lat: 33.86, lon: 35.5, date: "2026-06-07", etype: "Airstrike", severity: "HIGH", confidence: "Confirmed", theater: "Lebanon", actors: "Israel, Hezbollah", location: "Beirut (Dahieh)", source: "NPR", url: U.npr0607, country: "Lebanon", note: "Retaliatory strike on the Dahieh; two killed, 11 wounded." },
+  { id: "we-leb-0529", name: "Israeli strikes across south Lebanon kill 142", lat: 33.3, lon: 35.25, date: "2026-05-29", etype: "Airstrike", severity: "HIGH", confidence: "Confirmed", theater: "Lebanon", actors: "Israel, Hezbollah", location: "South Lebanon", source: "Wikipedia", url: "https://en.wikipedia.org/wiki/Timeline_of_the_2026_Lebanon_war", country: "Lebanon", note: "142 killed in 72 hours of widespread strikes." },
+  { id: "we-hormuz-0525", name: "US strikes Iranian missile sites and boats near Hormuz", lat: 27.18, lon: 56.28, date: "2026-05-25", etype: "Kinetic Strike", severity: "HIGH", confidence: "Confirmed", theater: "Iran, Strait of Hormuz", actors: "United States, Iran", location: "Bandar Abbas", source: "CNN", url: U.cnn0525, country: "Iran", note: "US 'self-defense' strikes on Iranian launchers and fast boats." },
+];
+
+const cutoff = Date.now() - CUTOFF_DAYS * 86_400_000;
+let dropped = 0;
+const out = [];
+for (const e of E) {
+  const time = new Date(`${e.date}T12:00:00Z`).getTime();
+  if (time < cutoff) { dropped++; continue; }
+  const { date, ...rest } = e;
+  out.push({ ...rest, time });
+}
+out.sort((a, b) => b.time - a.time);
+await writeFile(new URL("../public/world_events.json", import.meta.url), JSON.stringify(out));
+console.log(`Events: ${out.length} kept, ${dropped} dropped (>${CUTOFF_DAYS}d) -> public/world_events.json`);
+if (out.length) console.log(`newest ${new Date(out[0].time).toISOString().slice(0,10)} … oldest ${new Date(out[out.length-1].time).toISOString().slice(0,10)}`);

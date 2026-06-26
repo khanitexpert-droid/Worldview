@@ -11,6 +11,8 @@ import type {
   GdpDatum,
   StrikeEvent,
   WaterRisk,
+  IntelEvent,
+  Conflict,
 } from "./types";
 
 export interface SatellitesResponse {
@@ -99,3 +101,9 @@ export const fetchWaterStress = () =>
   staticInfra<WaterRisk>("/waterstress.json", "WRI AQUEDUCT 4.0");
 export const fetchMajorRivers = () =>
   staticInfra<InfraLine>("/rivers.json", "NATURAL EARTH");
+
+// ---- WORLD EVENTS layers (curated static snapshots) ----
+export const fetchWorldEvents = () =>
+  staticInfra<IntelEvent>("/world_events.json", "CURATED · OSINT");
+export const fetchConflicts = () =>
+  staticInfra<Conflict>("/conflicts.json", "CURATED · OSINT");
