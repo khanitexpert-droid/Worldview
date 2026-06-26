@@ -61,23 +61,23 @@ export const LAYERS: LayerMeta[] = [
     info: "Curated positions of notable military vessels (carriers, destroyers, amphibs) with class, role and embarked-aircraft data from public sources (USN / Naval Vessel Register). Positions are approximate / last-reported, not live AIS — navies don't broadcast.",
     defaultOn: false,
   },
-  // BATHYMETRY + SHIPPING ROUTES are built but gated to LOCAL/DEV only via
-  // NEXT_PUBLIC_SEA_EXTRAS (set in .env.local, NOT in Vercel) — so they're not
-  // live in prod yet. Flip them on later by adding that env var in Vercel.
+  // BATHYMETRY is live in prod (Esri Ocean imagery, public). SHIPPING ROUTES is
+  // still gated to LOCAL/DEV only via NEXT_PUBLIC_SEA_EXTRAS (set in .env.local,
+  // NOT in Vercel). Flip it on later by adding that env var in Vercel.
+  {
+    id: "bathymetry",
+    label: "BATHYMETRY",
+    short: "DEPTH",
+    icon: "≋",
+    color: "#4aa3ff",
+    source: "ESRI OCEAN",
+    group: "SEA",
+    info: "Ocean-floor depth (bathymetry) with depth contours from Esri's World Ocean Base — shelves, trenches and ridges beneath the surface.",
+    defaultOn: false,
+    noCount: true,
+  },
   ...((process.env.NEXT_PUBLIC_SEA_EXTRAS
     ? [
-        {
-          id: "bathymetry",
-          label: "BATHYMETRY",
-          short: "DEPTH",
-          icon: "≋",
-          color: "#4aa3ff",
-          source: "ESRI OCEAN",
-          group: "SEA",
-          info: "Ocean-floor depth (bathymetry) with depth contours from Esri's World Ocean Base — shelves, trenches and ridges beneath the surface.",
-          defaultOn: false,
-          noCount: true,
-        },
         {
           id: "shippingRoutes",
           label: "SHIPPING ROUTES",
