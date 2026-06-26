@@ -650,7 +650,7 @@ function renderLayer(
     return;
   }
 
-  // ---- ENVIRO · Major Rivers: blue polylines + a fading name label ----
+  // ---- ENVIRO · Major Rivers: blue polylines (name shown on hover) ----
   if (id === "majorrivers") {
     const col = Cesium.Color.fromCssColorString("#4aa3ff");
     for (const r of items as InfraLine[]) {
@@ -663,26 +663,12 @@ function renderLayer(
           id: eid,
           polyline: {
             positions: Cesium.Cartesian3.fromDegreesArray(path.flat()),
-            width: 1.4,
-            material: col.withAlpha(0.7),
+            width: 2,
+            material: col.withAlpha(0.85),
             arcType: Cesium.ArcType.GEODESIC,
           },
         });
         sel.set(eid, { kind: "majorrivers", ...r });
-      }
-      // one label per named river at its midpoint, fading out when zoomed far
-      if (r.name && r.name !== "River") {
-        ds.entities.add({
-          id: `majorrivers:lbl:${r.id}`,
-          position: Cesium.Cartesian3.fromDegrees(r.lon, r.lat, 0),
-          label: {
-            text: r.name,
-            font: "italic 11px sans-serif",
-            fillColor: Cesium.Color.fromCssColorString("#bfe3ff"),
-            showBackground: false,
-            scaleByDistance: new Cesium.NearFarScalar(6.0e5, 1.0, 4.0e6, 0.0),
-          },
-        });
       }
     }
     return;
@@ -776,6 +762,8 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   >(new Map());
   const userColorIdxRef = useRef(0);
   const [dragActive, setDragActive] = useState(false);
+  // hover tooltip for the Major Rivers layer (river name follows the cursor)
+  const [riverTip, setRiverTip] = useState<{ name: string; x: number; y: number } | null>(null);
 
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<Record<LayerId, unknown[]>>({
@@ -1251,6 +1239,25 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       // live rubber-band while measuring
       if (useWorldView.getState().activeTool === "measure") {
         measureToolRef.current?.move(cart ?? null);
+      }
+      // Major Rivers hover label — drill-pick a small tolerance box (thin lines)
+      // so the river is found even under the water-stress choropleth, then show
+      // its name in a cursor-following tooltip (deltasweep-style).
+      if (useWorldView.getState().layers.majorrivers) {
+        let nm: string | undefined;
+        for (const p of scene.drillPick(m.endPosition, 6, 8, 8)) {
+          const oid = p?.id;
+          const rid = typeof oid === "string" ? oid : (oid?.id as string | undefined);
+          if (rid && rid.startsWith("majorrivers:")) {
+            const ent = selMapRef.current.get(rid) as { name?: string } | undefined;
+            if (ent?.name && ent.name !== "River") { nm = ent.name; break; }
+          }
+        }
+        setRiverTip(
+          nm ? { name: nm, x: m.endPosition.x, y: m.endPosition.y } : null
+        );
+      } else {
+        setRiverTip(null); // no-op if already null
       }
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
@@ -2143,6 +2150,14 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       <SelectedPopup onFlyTo={flyTo} />
       <ActivityPopup />
       <LandCoverLegend />
+      {riverTip && (
+        <div
+          className="hud-panel pointer-events-none absolute z-40 whitespace-nowrap px-2 py-1 text-[11px] font-semibold text-wv-text"
+          style={{ left: riverTip.x + 14, top: riverTip.y + 12 }}
+        >
+          {riverTip.name}
+        </div>
+      )}
       <StatusBar />
       <BrandBadge />
       <RightPanels
