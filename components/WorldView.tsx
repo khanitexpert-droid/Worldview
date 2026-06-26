@@ -74,7 +74,6 @@ import TopBar from "./hud/TopBar";
 import StatusBar from "./hud/StatusBar";
 import SidePanel from "./hud/SidePanel";
 import RightPanels from "./hud/RightPanels";
-import BrandBadge from "./hud/BrandBadge";
 import SearchBar from "./hud/SearchBar";
 import SelectedPopup from "./hud/SelectedPopup";
 import ActivityPopup from "./hud/ActivityPopup";
@@ -2471,7 +2470,6 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
         </div>
       )}
       <StatusBar />
-      <BrandBadge />
       <RightPanels
         onAddFiles={addFiles}
         onAddCogUrl={addCogUrl}

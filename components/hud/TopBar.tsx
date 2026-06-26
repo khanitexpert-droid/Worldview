@@ -1,13 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useWorldView, type RightPanel } from "@/lib/store";
 import Controls from "./Controls";
 import LayerCategories from "./LayerCategories";
 
 /**
- * Top bar (deltasweep-style shell). Left: the layer-category tabs. Right: utility
- * tabs (Intel · Add Data · Tools) + Clear + view controls — all styled as pills
- * with a colored dot.
+ * Top bar (deltasweep-style): brand + LIVE on the left, the layer-category +
+ * utility tabs in a compact cluster, view controls and the UTC clock on the
+ * right. (The bottom-right brand badge is retired in favor of this.)
  */
 const TABS: { id: RightPanel; label: string; color: string }[] = [
   { id: "intel", label: "INTEL", color: "#ff2d95" },
@@ -33,16 +34,38 @@ export default function TopBar({
   const countFor = (id: RightPanel) =>
     id === "intel" ? intelCount : id === "userdata" ? userLayerCount : 0;
 
+  const [clock, setClock] = useState("--:--:--");
+  useEffect(() => {
+    const tick = () => setClock(new Date().toISOString().slice(11, 19));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, []);
+
   return (
     <div
-      className="fixed left-0 right-0 top-0 z-50 flex h-14 items-center gap-1 border-b border-wv-border px-2 backdrop-blur-md"
+      className="fixed left-0 right-0 top-0 z-50 flex h-14 items-center gap-2 border-b border-wv-border px-3 backdrop-blur-md"
       style={{ background: "rgba(7,4,14,0.96)" }}
     >
-      {/* layer categories — spread across the bar to fill the width */}
-      <LayerCategories className="flex flex-1 items-center justify-between gap-1 pr-2" />
+      {/* brand — top-left */}
+      <div className="flex shrink-0 items-center gap-2.5 pr-1">
+        <div className="leading-none">
+          <div className="text-[8px] tracking-[0.22em] text-wv-muted">POWERED BY</div>
+          <div className="text-sm font-bold tracking-[0.16em] text-wv-magenta glow-magenta">
+            WORLD<span className="text-wv-cyan glow-cyan">VIEW</span>
+          </div>
+        </div>
+        <span className="flex items-center gap-1 rounded-sm border border-wv-border px-2 py-1 text-[10px] font-bold tracking-[0.12em] text-wv-green">
+          <span className="wv-live-dot inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#5dff9e" }} />
+          LIVE
+        </span>
+      </div>
 
-      {/* utility tabs + clear + controls — kept compact on the right */}
-      <div className="flex shrink-0 items-center gap-1">
+      {/* layer-category tabs (compact) */}
+      <LayerCategories />
+
+      {/* utility tabs + clear (compact) */}
+      <div className="flex items-center gap-1">
         {TABS.map((t) => {
           const on = open === t.id;
           const count = countFor(t.id);
@@ -69,8 +92,6 @@ export default function TopBar({
             </button>
           );
         })}
-
-        {/* CLEAR — turn off every active data layer */}
         <button
           onClick={clearLayers}
           disabled={activeCount === 0}
@@ -86,9 +107,15 @@ export default function TopBar({
           CLEAR
           {activeCount > 0 && <span className="tabular-nums opacity-80">{activeCount}</span>}
         </button>
+      </div>
 
-        <span className="mx-1 h-7 w-px bg-wv-border" />
+      {/* view controls + UTC clock — top-right */}
+      <div className="ml-auto flex shrink-0 items-center gap-3">
         <Controls onReset={onReset} onLocate={onLocate} />
+        <div className="text-right leading-none">
+          <div className="text-sm font-bold tabular-nums text-wv-cyan glow-cyan">{clock} UTC</div>
+          <div className="text-[8px] tracking-[0.24em] text-wv-muted">ZULU</div>
+        </div>
       </div>
     </div>
   );
