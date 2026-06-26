@@ -18,6 +18,9 @@ export interface LayerMeta {
   // optional second-level header inside a group's dropdown (e.g. INFRA splits
   // into ENERGY / CIVILIAN, like deltasweep). Only used by LayerCategories.
   subgroup?: string;
+  // kept in the registry (so the LayerId + render/poll machinery stay intact)
+  // but NOT shown in the category menu, so it can never be enabled.
+  hidden?: boolean;
 }
 
 // Central registry — the HUD, the boot sequence and the renderers all read this.
@@ -34,6 +37,8 @@ export const LAYERS: LayerMeta[] = [
     defaultOn: false,
   },
   {
+    // NAVAL / AIS — hidden from the SEA menu (the free AIS relay was unreliable).
+    // Kept in the registry so layers.ships stays a real boolean for the renderer.
     id: "ships",
     label: "NAVAL / AIS",
     short: "AIS",
@@ -43,6 +48,7 @@ export const LAYERS: LayerMeta[] = [
     group: "SEA",
     info: "Over 50,000 large merchant ships are at sea right now, carrying around 90% of everything the world trades.",
     defaultOn: false,
+    hidden: true,
   },
   {
     id: "navyShips",

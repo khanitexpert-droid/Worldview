@@ -44,7 +44,7 @@ export default function StatusBar() {
 
   const active = LAYERS.filter((l) => layers[l.id]).length;
   const aircraft = layers.flights ? counts.flights ?? 0 : 0;
-  const vessels = layers.ships ? counts.ships ?? 0 : 0;
+  const vessels = layers.navyShips ? counts.navyShips ?? 0 : 0;
   const eventsN =
     (layers.events ? counts.events ?? 0 : 0) +
     (layers.strikes ? counts.strikes ?? 0 : 0) +

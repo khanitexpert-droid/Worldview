@@ -45,7 +45,7 @@ export default function LayerCategories({ className }: { className?: string }) {
   return (
     <div ref={ref} className={className ?? "flex items-center gap-1"}>
       {CATS.map((cat) => {
-        const items = LAYERS.filter((l) => l.group === cat.id);
+        const items = LAYERS.filter((l) => l.group === cat.id && !l.hidden);
         if (!items.length) return null;
         const active = items.filter((l) => layers[l.id]).length;
         const isOpen = open === cat.id;
