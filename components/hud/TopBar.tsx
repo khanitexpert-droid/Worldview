@@ -1,19 +1,19 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { useWorldView, type RightPanel } from "@/lib/store";
 import Controls from "./Controls";
 import LayerCategories from "./LayerCategories";
 
 /**
- * Top bar (Google-Maps-style shell). Left: labeled utility tabs (Layers · Intel ·
- * My Data · Tools) that open the right-side overlay panels. Right: Reset / Locate.
- * Dark, near-solid background with brightened icons + a text label under each.
+ * Top bar (Google-Maps-style shell). Left: utility tabs (Intel · Add Data ·
+ * Tools) that open the right-side overlay panels — styled identically to the
+ * layer-category tabs (pill + colored dot). Then the layer categories. Right:
+ * Reset / Locate.
  */
-const TABS: { id: RightPanel; icon: string; label: string }[] = [
-  { id: "intel", icon: "≣", label: "INTEL" },
-  { id: "userdata", icon: "⤓", label: "ADD DATA" },
-  { id: "tools", icon: "⚒", label: "TOOLS" },
+const TABS: { id: RightPanel; label: string; color: string }[] = [
+  { id: "intel", label: "INTEL", color: "#ff2d95" },
+  { id: "userdata", label: "ADD DATA", color: "#00e5ff" },
+  { id: "tools", label: "TOOLS", color: "#aaff00" },
 ];
 
 export default function TopBar({
@@ -27,65 +27,44 @@ export default function TopBar({
   const toggle = useWorldView((s) => s.toggleRightPanel);
   const intelCount = useWorldView((s) => s.intel.length);
   const userLayerCount = useWorldView((s) => s.userLayers.length);
-  const activeTool = useWorldView((s) => s.activeTool);
-
-  const badge = (id: RightPanel): ReactNode => {
-    if (id === "intel")
-      return intelCount > 0 ? dotBadge("wv-live-dot bg-wv-magenta") : null;
-    if (id === "userdata")
-      return userLayerCount > 0
-        ? countBadge(userLayerCount, "var(--wv-amber)")
-        : null;
-    if (id === "tools")
-      return activeTool
-        ? dotBadge("wv-live-dot", {
-            background: "#aaff00",
-            boxShadow: "0 0 8px #aaff00",
-          })
-        : null;
-    return null;
-  };
+  const countFor = (id: RightPanel) =>
+    id === "intel" ? intelCount : id === "userdata" ? userLayerCount : 0;
 
   return (
     <div
-      className="fixed left-0 right-0 top-0 z-50 flex h-14 items-stretch gap-1 border-b border-wv-border px-2 backdrop-blur-md"
+      className="fixed left-0 right-0 top-0 z-50 flex h-14 items-center gap-1 border-b border-wv-border px-2 backdrop-blur-md"
       style={{ background: "rgba(7,4,14,0.96)" }}
     >
-      {TABS.map((t) => {
-        const on = open === t.id;
-        return (
-          <button
-            key={t.id}
-            onClick={() => toggle(t.id)}
-            title={t.label}
-            aria-label={t.label}
-            aria-pressed={on}
-            className={`relative flex w-[68px] flex-col items-center justify-center gap-1 rounded-sm transition-colors ${
-              on ? "bg-white/[0.07]" : "hover:bg-white/[0.05]"
-            }`}
-          >
-            <span
-              className="glow-amber text-[21px] leading-none"
-              style={{ color: "#ffe14d" }}
+      <div className="flex items-center gap-1">
+        {TABS.map((t) => {
+          const on = open === t.id;
+          const count = countFor(t.id);
+          return (
+            <button
+              key={t.id}
+              onClick={() => toggle(t.id)}
+              title={t.label}
+              aria-label={t.label}
+              aria-pressed={on}
+              className="flex items-center gap-1.5 rounded-sm border px-2 py-1.5 text-[10px] font-bold tracking-[0.1em] transition-colors"
+              style={{
+                borderColor: on ? t.color : "var(--wv-border)",
+                color: on ? t.color : "var(--wv-muted)",
+                background: on ? `${t.color}1a` : "transparent",
+              }}
             >
-              {t.icon}
-            </span>
-            <span
-              className="text-[9px] font-bold tracking-[0.16em]"
-              style={{ color: "#ffe14d" }}
-            >
-              {t.label}
-            </span>
-            {on && (
               <span
-                className="absolute bottom-0 left-2 right-2 h-[2px]"
-                style={{ background: "#ffe14d", boxShadow: "0 0 8px #ffe14d" }}
+                className="inline-block h-1.5 w-1.5 rounded-full"
+                style={{ background: t.color, boxShadow: on ? `0 0 6px ${t.color}` : "none" }}
               />
-            )}
-            {badge(t.id)}
-          </button>
-        );
-      })}
+              {t.label}
+              {count > 0 && (
+                <span className="tabular-nums opacity-80">{count}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
       <span className="mx-1 h-7 w-px bg-wv-border" />
       <LayerCategories />
@@ -94,21 +73,5 @@ export default function TopBar({
         <Controls onReset={onReset} onLocate={onLocate} />
       </div>
     </div>
-  );
-}
-
-function dotBadge(cls: string, style?: React.CSSProperties): ReactNode {
-  return (
-    <span className={`absolute right-2 top-2 h-2 w-2 rounded-full ${cls}`} style={style} />
-  );
-}
-function countBadge(n: number, color: string): ReactNode {
-  return (
-    <span
-      className="absolute right-1.5 top-1.5 min-w-[14px] rounded-full border border-wv-border bg-wv-darker px-1 text-center text-[8px] font-bold leading-[13px]"
-      style={{ color }}
-    >
-      {n}
-    </span>
   );
 }

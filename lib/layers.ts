@@ -137,7 +137,7 @@ export const LAYERS: LayerMeta[] = [
     icon: "⬢",
     color: "#5dff9e",
     source: "GOOGLE 3D TILES",
-    group: "IMAGERY",
+    group: "3D VIEW",
     info: "Google Photorealistic 3D Tiles — a fully textured 3D mesh of the real world (buildings, terrain, bridges), streamed from Google Maps Platform via Cesium ion. Switches the synthwave globe for true Google-Earth-style detail: zoom into any city and tilt to fly between the buildings. Streaming is metered against your ion quota.",
     defaultOn: false,
     noCount: true,
