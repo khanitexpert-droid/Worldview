@@ -13,6 +13,7 @@ const CATS: { id: string; color: string }[] = [
   { id: "SEA", color: "#4aa3ff" },
   { id: "GROUND", color: "#ffb347" },
   { id: "INFRA", color: "#f5a623" },
+  { id: "ENVIRO", color: "#3ddc97" },
   { id: "IMAGERY", color: "#5dff9e" },
 ];
 

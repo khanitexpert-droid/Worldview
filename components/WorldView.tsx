@@ -29,6 +29,8 @@ import {
   fetchCables,
   fetchGdp,
   fetchStrikes,
+  fetchWaterStress,
+  fetchMajorRivers,
 } from "@/lib/feeds";
 import type {
   Flight,
@@ -42,6 +44,7 @@ import type {
   InfraPointKind,
   InfraLineKind,
   StrikeEvent,
+  WaterRisk,
 } from "@/lib/types";
 import { SatelliteField } from "@/lib/satField";
 import { EventFx } from "@/lib/eventFx";
@@ -64,6 +67,7 @@ import BrandBadge from "./hud/BrandBadge";
 import SearchBar from "./hud/SearchBar";
 import SelectedPopup from "./hud/SelectedPopup";
 import ActivityPopup from "./hud/ActivityPopup";
+import LandCoverLegend from "./hud/LandCoverLegend";
 import { createShipDensityProvider } from "@/lib/shipDensity";
 
 // ---- palette ----
@@ -161,7 +165,7 @@ const STRIKE_IMAGE = `data:image/svg+xml,${encodeURIComponent(STRIKE_SVG)}`;
 // opt out of the generic poll/render pipeline entirely.
 type PollLayerId = Exclude<
   LayerId,
-  "satellites" | "photoreal" | "bathymetry" | "shippingRoutes"
+  "satellites" | "photoreal" | "bathymetry" | "shippingRoutes" | "landcover"
 >;
 
 // colors cycled through for each imported user layer (MY DATA)
@@ -206,6 +210,9 @@ const POLL_MS: Record<PollLayerId, number> = {
   pipelines: 86_400_000,
   cables: 86_400_000,
   gdp: 86_400_000,
+  // ENVIRO (vector layers; landcover is a separate imagery toggle)
+  waterstress: 86_400_000,
+  majorrivers: 86_400_000,
 };
 
 const FETCHERS: Record<
@@ -232,6 +239,8 @@ const FETCHERS: Record<
   pipelines: fetchPipelines,
   cables: fetchCables,
   gdp: fetchGdp,
+  waterstress: fetchWaterStress,
+  majorrivers: fetchMajorRivers,
 };
 
 // layers handled by the generic (snap-on-poll) renderer — flights and ships are
@@ -357,6 +366,18 @@ function gdpRamp(t: number): Cesium.Color {
   if (t < 0.5) Cesium.Color.lerp(GDP_LO, GDP_MID, t / 0.5, c);
   else Cesium.Color.lerp(GDP_MID, GDP_HI, (t - 0.5) / 0.5, c);
   return c;
+}
+
+// Water Stress — discrete Aqueduct risk bands (low → extremely high).
+const WATER_BANDS = [
+  Cesium.Color.fromCssColorString("#ffffb2"), // <1  Low
+  Cesium.Color.fromCssColorString("#ffd23c"), // 1-2 Low-Medium
+  Cesium.Color.fromCssColorString("#ff9e3c"), // 2-3 Medium-High
+  Cesium.Color.fromCssColorString("#ff5630"), // 3-4 High
+  Cesium.Color.fromCssColorString("#e0294a"), // 4-5 Extremely High
+];
+function waterColor(score: number): Cesium.Color {
+  return WATER_BANDS[Math.max(0, Math.min(4, Math.floor(score)))];
 }
 
 // live state for one aircraft. We keep a "truth" target (tLon/tLat/tAlt) that
@@ -629,6 +650,70 @@ function renderLayer(
     return;
   }
 
+  // ---- ENVIRO · Major Rivers: blue polylines + a fading name label ----
+  if (id === "majorrivers") {
+    const col = Cesium.Color.fromCssColorString("#4aa3ff");
+    for (const r of items as InfraLine[]) {
+      let seg = 0;
+      for (const path of r.paths || []) {
+        if (!path || path.length < 2) continue;
+        const eid = `majorrivers:${r.id}:${seg++}`;
+        if (ds.entities.getById(eid)) continue;
+        ds.entities.add({
+          id: eid,
+          polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArray(path.flat()),
+            width: 1.4,
+            material: col.withAlpha(0.7),
+            arcType: Cesium.ArcType.GEODESIC,
+          },
+        });
+        sel.set(eid, { kind: "majorrivers", ...r });
+      }
+      // one label per named river at its midpoint, fading out when zoomed far
+      if (r.name && r.name !== "River") {
+        ds.entities.add({
+          id: `majorrivers:lbl:${r.id}`,
+          position: Cesium.Cartesian3.fromDegrees(r.lon, r.lat, 0),
+          label: {
+            text: r.name,
+            font: "italic 11px sans-serif",
+            fillColor: Cesium.Color.fromCssColorString("#bfe3ff"),
+            showBackground: false,
+            scaleByDistance: new Cesium.NearFarScalar(6.0e5, 1.0, 4.0e6, 0.0),
+          },
+        });
+      }
+    }
+    return;
+  }
+
+  // ---- ENVIRO · Water Stress: choropleth basin polygons shaded by risk ----
+  if (id === "waterstress") {
+    for (const b of items as WaterRisk[]) {
+      const fill = waterColor(b.score);
+      let pi = 0;
+      for (const ring of b.polygons || []) {
+        if (!ring || ring.length < 3) continue;
+        const eid = `waterstress:${b.id}:${pi++}`;
+        if (ds.entities.getById(eid)) continue;
+        ds.entities.add({
+          id: eid,
+          polygon: {
+            hierarchy: new Cesium.PolygonHierarchy(
+              Cesium.Cartesian3.fromDegreesArray(ring.flat())
+            ),
+            material: fill.withAlpha(0.5),
+            outline: false,
+            // a flat shaded layer on the ellipsoid (no terrain in the scene)
+          },
+        });
+        sel.set(eid, { kind: "waterstress", ...b });
+      }
+    }
+    return;
+  }
+
 }
 
 export default function WorldView({ onReady }: { onReady?: () => void }) {
@@ -671,6 +756,8 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const bathyLayersRef = useRef<Cesium.ImageryLayer[]>([]);
   // ---- shipping-routes density imagery (LERC, lazily created) ----
   const shipRoutesLayerRef = useRef<Cesium.ImageryLayer | null>(null);
+  // ---- land cover (ESA WorldCover WMTS) imagery layer, lazily created ----
+  const landCoverLayerRef = useRef<Cesium.ImageryLayer | null>(null);
   // ---- Google Photorealistic 3D Tiles (lazy-created scene primitive) ----
   const tilesetRef = useRef<Cesium.Cesium3DTileset | null>(null);
   const photorealLoadingRef = useRef(false);
@@ -717,6 +804,10 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     pipelines: [],
     cables: [],
     gdp: [],
+    // ENVIRO
+    waterstress: [],
+    majorrivers: [],
+    landcover: [], // raster imagery toggle, never carries feed data
   });
 
   const layers = useWorldView((s) => s.layers);
@@ -725,6 +816,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const selectedActivity = useWorldView((s) => s.selectedActivity);
   const bathymetry = useWorldView((s) => s.layers.bathymetry);
   const shippingRoutes = useWorldView((s) => s.layers.shippingRoutes);
+  const landcover = useWorldView((s) => s.layers.landcover);
   const photoreal = useWorldView((s) => s.layers.photoreal);
   const userLayers = useWorldView((s) => s.userLayers);
   const addUserLayer = useWorldView((s) => s.addUserLayer);
@@ -1779,6 +1871,23 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     if (shipRoutesLayerRef.current) shipRoutesLayerRef.current.show = shippingRoutes;
   }, [shippingRoutes, ready]);
 
+  // ---- land cover: NASA GIBS MODIS IGBP Land Cover (annual) via WMTS (lazy) ----
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !ready) return;
+    if (landcover && !landCoverLayerRef.current) {
+      landCoverLayerRef.current = viewer.imageryLayers.addImageryProvider(
+        new Cesium.UrlTemplateImageryProvider({
+          url: "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Combined_L3_IGBP_Land_Cover_Type_Annual/default/2024-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png",
+          maximumLevel: 8,
+          credit: "NASA GIBS · MODIS IGBP Land Cover",
+        })
+      );
+      landCoverLayerRef.current.alpha = 0.8; // let terrain read through a touch
+    }
+    if (landCoverLayerRef.current) landCoverLayerRef.current.show = landcover;
+  }, [landcover, ready]);
+
   // ---- world events: stream headlines to intel + drive the breaking-news radar ----
   useEffect(() => {
     if (!ready || !layers.events) return;
@@ -2033,6 +2142,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       <SidePanel onFlyTo={flyTo} />
       <SelectedPopup onFlyTo={flyTo} />
       <ActivityPopup />
+      <LandCoverLegend />
       <StatusBar />
       <BrandBadge />
       <RightPanels

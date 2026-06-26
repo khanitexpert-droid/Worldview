@@ -311,6 +311,41 @@ export const LAYERS: LayerMeta[] = [
     info: "Submarine communications cables — the fiber-optic lines on the seabed that carry ~99% of intercontinental internet traffic. Drawn as routes between landing points.",
     defaultOn: false,
   },
+  // ---- ENVIRO group (deltasweep parity) ----
+  {
+    id: "waterstress",
+    label: "Water Stress",
+    short: "H2O",
+    icon: "💧",
+    color: "#ff7a3c",
+    source: "WRI AQUEDUCT 4.0",
+    group: "ENVIRO",
+    info: "Baseline water risk by river basin (WRI Aqueduct 4.0, HydroSHEDS L6) — shaded from low to extremely high. Click a basin for its risk score.",
+    defaultOn: false,
+  },
+  {
+    id: "majorrivers",
+    label: "Major Rivers",
+    short: "RIV",
+    icon: "≈",
+    color: "#4aa3ff",
+    source: "NATURAL EARTH",
+    group: "ENVIRO",
+    info: "The world's major rivers and canals (Natural Earth, public domain). Click a river for its name.",
+    defaultOn: false,
+  },
+  {
+    id: "landcover",
+    label: "Land Cover",
+    short: "LULC",
+    icon: "◧",
+    color: "#5dff9e",
+    source: "NASA GIBS · MODIS",
+    group: "ENVIRO",
+    info: "Global land cover — forest, shrubland, savanna, grassland, cropland, urban, wetland, barren, snow/ice and water — from NASA's MODIS IGBP classification (annual). A raster overlay with a class legend.",
+    defaultOn: false,
+    noCount: true,
+  },
 ];
 
 export const LAYER_BY_ID: Record<LayerId, LayerMeta> = Object.fromEntries(

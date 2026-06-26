@@ -10,6 +10,7 @@ import type {
   InfraLine,
   GdpDatum,
   StrikeEvent,
+  WaterRisk,
 } from "./types";
 
 export interface SatellitesResponse {
@@ -92,3 +93,9 @@ export const fetchPipelines = () =>
 export const fetchCables = () =>
   staticInfra<InfraLine>("/infra_cables.json", "TELEGEOGRAPHY");
 export const fetchGdp = () => staticInfra<GdpDatum>("/infra_gdp.json", "WORLD BANK");
+
+// ---- ENVIRO layers (bundled static; landcover is a raster imagery toggle) ----
+export const fetchWaterStress = () =>
+  staticInfra<WaterRisk>("/waterstress.json", "WRI AQUEDUCT 4.0");
+export const fetchMajorRivers = () =>
+  staticInfra<InfraLine>("/rivers.json", "NATURAL EARTH");

@@ -13,6 +13,10 @@ export type LayerId =
   | "navyShips"
   | "shippingRoutes"
   | "strikes"
+  // ---- ENVIRO group ----
+  | "waterstress"
+  | "majorrivers"
+  | "landcover"
   // ---- INFRA group (deltasweep parity) ----
   | InfraPointKind
   | InfraLineKind
@@ -350,6 +354,22 @@ export interface StrikeEvent {
   note?: string; // short description
 }
 
+/**
+ * A water-risk basin for the Water Stress choropleth (ENVIRO). WRI Aqueduct 4.0
+ * baseline water risk aggregated to a HydroSHEDS L6 basin — drawn as filled
+ * polygons shaded by score, with a "// WATER RISK" detail card.
+ */
+export interface WaterRisk {
+  id: string;
+  name: string; // basin / nearest place label
+  lon: number; // centroid (fly-to / detail)
+  lat: number;
+  polygons: number[][][]; // array of rings, each [ [lon,lat], … ]
+  score: number; // 0..5 aggregated baseline water risk
+  label: string; // band, e.g. "Extremely High (4-5)"
+  country?: string;
+}
+
 /** One country's GDP-per-capita value for the choropleth layer. */
 export interface GdpDatum {
   id: string; // ISO-A3
@@ -370,6 +390,9 @@ export type FeedEntity =
   | ({ kind: "fires" } & Fire)
   | ({ kind: "events" } & WorldEvent)
   | ({ kind: "strikes" } & StrikeEvent)
+  // ---- ENVIRO ----
+  | ({ kind: "waterstress" } & WaterRisk)
+  | ({ kind: "majorrivers" } & InfraLine)
   // ---- INFRA ----
   | ({ kind: InfraPointKind } & InfraSite)
   | ({ kind: InfraLineKind } & InfraLine)

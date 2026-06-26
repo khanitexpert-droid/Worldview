@@ -357,6 +357,30 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
       rows.push(["BASIS", "WORLD BANK"]);
       return { title: e.name, rows };
     }
+    case "waterstress": {
+      const band =
+        e.score >= 4 ? "#e0294a" : e.score >= 3 ? "#ff5630" : e.score >= 2 ? "#ff9e3c" : e.score >= 1 ? "#ffd23c" : "#cdcf6a";
+      const rows: [string, React.ReactNode][] = [
+        ["OVERALL RISK", <span style={{ color: band }}>{e.label}</span>],
+        ["RISK SCORE", `${e.score.toFixed(2)} / 5`],
+      ];
+      if (e.country) {
+        const fl = countryFlag(e.country);
+        rows.push([
+          "COUNTRY",
+          <span>
+            {fl && <span className="mr-1">{fl.emoji}</span>}
+            {e.country}
+          </span>,
+        ]);
+      }
+      return { title: e.name, rows };
+    }
+    case "majorrivers": {
+      const rows: [string, React.ReactNode][] = [["FEATURE", "Major river"]];
+      if (e.country) rows.push(["REGION", e.country]);
+      return { title: e.name, rows };
+    }
   }
 }
 
@@ -471,6 +495,14 @@ export default function EntityBody({
               </a>
             )}
           </>
+        )}
+
+        {/* water-risk provenance footer (deltasweep-style) */}
+        {selected.kind === "waterstress" && (
+          <p className="mt-2 text-[10px] leading-relaxed text-wv-text/75">
+            WRI Aqueduct 4.0 — aggregated baseline water risk (physical quantity &
+            quality + regulatory/reputational), HydroSHEDS L6 basin.
+          </p>
         )}
 
         <button
