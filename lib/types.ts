@@ -12,6 +12,7 @@ export type LayerId =
   | "bathymetry"
   | "navyShips"
   | "shippingRoutes"
+  | "strikes"
   // ---- INFRA group (deltasweep parity) ----
   | InfraPointKind
   | InfraLineKind
@@ -326,6 +327,29 @@ export interface InfraLine {
   country?: string;
 }
 
+/**
+ * A military strike / kinetic event (GROUND layer, deltasweep-style). Curated
+ * real OSINT — notable strikes across the Iran/Israel/US/Gulf theatre — plotted
+ * at the impact location with a source link. Not a live feed (events are
+ * historical/verified), so it's a bundled snapshot.
+ */
+export interface StrikeEvent {
+  id: string;
+  name: string; // headline
+  lon: number;
+  lat: number;
+  time: number; // epoch ms (event date)
+  stype: string; // strike type, e.g. "Ballistic Missile Strike" / "Airstrike"
+  actor: string; // attacking force, e.g. "Israel" / "Iran" / "United States"
+  target: string; // e.g. "nuclear facility" / "military base" / "shipping"
+  fatalities?: number;
+  confidence: "LOW" | "MEDIUM" | "HIGH";
+  source: string; // outlet
+  url: string; // VIEW SOURCE link
+  country?: string; // location country
+  note?: string; // short description
+}
+
 /** One country's GDP-per-capita value for the choropleth layer. */
 export interface GdpDatum {
   id: string; // ISO-A3
@@ -345,6 +369,7 @@ export type FeedEntity =
   | ({ kind: "navyShips" } & NavyShip)
   | ({ kind: "fires" } & Fire)
   | ({ kind: "events" } & WorldEvent)
+  | ({ kind: "strikes" } & StrikeEvent)
   // ---- INFRA ----
   | ({ kind: InfraPointKind } & InfraSite)
   | ({ kind: InfraLineKind } & InfraLine)

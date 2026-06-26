@@ -296,6 +296,20 @@ function fields(e: FeedEntity): { title: string; rows: [string, React.ReactNode]
           ["BASIS", "MEDIA ORIGIN"],
         ],
       };
+    case "strikes": {
+      const confColor =
+        e.confidence === "HIGH" ? "#ff414e" : e.confidence === "MEDIUM" ? "#ffb347" : "#9aa5b1";
+      const rows: [string, React.ReactNode][] = [
+        ["DATE", new Date(e.time).toISOString().slice(0, 10)],
+        ["TYPE", e.stype],
+        ["ACTOR", e.actor],
+        ["TARGET", e.target],
+      ];
+      if (e.fatalities != null) rows.push(["FATALITIES", String(e.fatalities)]);
+      rows.push(["CONFIDENCE", <span style={{ color: confColor }}>{e.confidence}</span>]);
+      rows.push(["SOURCE", e.source]);
+      return { title: e.name, rows };
+    }
     // ---- INFRA point sites (all 9 share the InfraSite shape) ----
     case "lng":
     case "nuclear":
@@ -435,6 +449,27 @@ export default function EntityBody({
                 </p>
               )}
             <p className="mt-2 text-[9px] text-wv-muted">Source: {meta.source}</p>
+          </>
+        )}
+
+        {/* strike description + source link (deltasweep VIEW SOURCE) */}
+        {selected.kind === "strikes" && (
+          <>
+            {selected.note && (
+              <p className="mt-2 text-[10px] leading-relaxed text-wv-text/75">
+                {selected.note}
+              </p>
+            )}
+            {selected.url && (
+              <a
+                href={selected.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 block border border-wv-border py-1.5 text-center text-[10px] font-bold tracking-[0.16em] text-wv-text transition-colors hover:border-wv-cyan hover:text-wv-cyan hover:box-glow-cyan"
+              >
+                VIEW SOURCE →
+              </a>
+            )}
           </>
         )}
 

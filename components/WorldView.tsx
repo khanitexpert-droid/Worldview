@@ -28,6 +28,7 @@ import {
   fetchPipelines,
   fetchCables,
   fetchGdp,
+  fetchStrikes,
 } from "@/lib/feeds";
 import type {
   Flight,
@@ -40,6 +41,7 @@ import type {
   GdpDatum,
   InfraPointKind,
   InfraLineKind,
+  StrikeEvent,
 } from "@/lib/types";
 import { SatelliteField } from "@/lib/satField";
 import { EventFx } from "@/lib/eventFx";
@@ -145,6 +147,15 @@ const FLAME_SVG =
   "fill='#ffffff' stroke='#3a0a00' stroke-width='0.6' stroke-linejoin='round'/></svg>";
 const FLAME_IMAGE = `data:image/svg+xml,${encodeURIComponent(FLAME_SVG)}`;
 
+// strike/impact marker: an orange-red 4-point spark with a bright core + dark
+// outline, so it reads as a kinetic event against terrain (GROUND · Strikes).
+const STRIKE_SVG =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>" +
+  "<path d='M12 1.3 L13.8 10.2 L22.7 12 L13.8 13.8 L12 22.7 L10.2 13.8 L1.3 12 L10.2 10.2 Z' " +
+  "fill='#ff5630' stroke='#3a0500' stroke-width='0.6' stroke-linejoin='round'/>" +
+  "<circle cx='12' cy='12' r='2.6' fill='#ffd23c' stroke='#3a0500' stroke-width='0.5'/></svg>";
+const STRIKE_IMAGE = `data:image/svg+xml,${encodeURIComponent(STRIKE_SVG)}`;
+
 // satellites are propagated client-side every frame by SatelliteField, and
 // photoreal is a scene-level toggle (Google 3D tiles), not a polled feed — both
 // opt out of the generic poll/render pipeline entirely.
@@ -180,6 +191,8 @@ const POLL_MS: Record<PollLayerId, number> = {
   events: 180000,
   // curated static vessels — effectively load-once (like bases)
   navyShips: 86_400_000,
+  // curated strike events — bundled static snapshot, load-once.
+  strikes: 86_400_000,
   // INFRA — all bundled static snapshots (sites/routes don't move), load-once.
   lng: 86_400_000,
   nuclear: 86_400_000,
@@ -206,6 +219,7 @@ const FETCHERS: Record<
   fires: fetchFires,
   events: fetchEvents,
   navyShips: fetchNavyShips,
+  strikes: fetchStrikes,
   lng: fetchLng,
   nuclear: fetchNuclear,
   oilgas: fetchOilGas,
@@ -515,6 +529,26 @@ function renderLayer(
     return;
   }
 
+  if (id === "strikes") {
+    for (const s of items as StrikeEvent[]) {
+      const eid = `strikes:${s.id}`;
+      if (ds.entities.getById(eid)) continue;
+      ds.entities.add({
+        id: eid,
+        position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 0),
+        billboard: {
+          image: STRIKE_IMAGE,
+          width: 26,
+          height: 26,
+          scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.0, 2.6e7, 0.4),
+          // let the globe occlude far-side strikes (no disableDepthTestDistance).
+        },
+      });
+      sel.set(eid, { kind: "strikes", ...s });
+    }
+    return;
+  }
+
   // ---- INFRA point layers (fixed sites): one shared renderer, colored per
   // layer. Cheap Cesium points so dense sets (airports, ports) stay smooth. ----
   if (INFRA_POINT_KINDS.has(id)) {
@@ -669,6 +703,7 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     navyShips: [],
     bathymetry: [], // imagery toggle, never carries feed data
     shippingRoutes: [], // imagery toggle, never carries feed data
+    strikes: [],
     // INFRA
     lng: [],
     nuclear: [],

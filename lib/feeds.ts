@@ -9,6 +9,7 @@ import type {
   InfraSite,
   InfraLine,
   GdpDatum,
+  StrikeEvent,
 } from "./types";
 
 export interface SatellitesResponse {
@@ -46,6 +47,11 @@ export const fetchBases = async () => ({
 export const fetchNavyShips = async () => ({
   items: (await import("./navalAssets")).NAVAL_ASSETS,
   source: "CURATED · USN",
+});
+// Curated strike events (GROUND) — a bundled static snapshot (historical, not live).
+export const fetchStrikes = async () => ({
+  items: await getJSON<StrikeEvent[]>("/strikes.json"),
+  source: "CURATED · OSINT",
 });
 // Read the events the scheduled GitHub Action publishes (relayed same-origin by
 // /api/events). We do NOT fetch GDELT from the browser — its CORS on the JSON

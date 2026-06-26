@@ -144,6 +144,17 @@ export const LAYERS: LayerMeta[] = [
     group: "GROUND",
   },
   {
+    id: "strikes",
+    label: "Strikes",
+    short: "STRK",
+    icon: "✸",
+    color: "#ff414e",
+    source: "CURATED · OSINT",
+    info: "Notable military strikes across the Iran / Israel / US / Gulf theatre — airstrikes, missile and drone attacks on nuclear, military and other targets. Curated real OSINT (2024–2025), plotted at the impact location with a source link. Not a live feed.",
+    defaultOn: false,
+    group: "GROUND",
+  },
+  {
     id: "fires",
     label: "ACTIVE FIRES",
     short: "FIRE",
