@@ -1,66 +1,62 @@
-// Build the curated GROUND · Strikes dataset (public/strikes.json) from a
-// hand-authored list of notable, well-documented strikes across the Iran /
-// Israel / US / Gulf theatre (2024-2025). Real OSINT events; readable ISO dates
-// are converted to epoch ms. Source links go to the event's Wikipedia article.
+// Build the GROUND · Strikes dataset (public/strikes.json) from the LATEST
+// reported strikes across the Iran / Israel / US / Gulf theatre. Per the user's
+// rule, NOTHING older than ~2 months is kept: a hard CUTOFF_DAYS filter drops
+// stale events at build time. Refresh by updating the list below from current
+// reporting (Al Jazeera et al.) and re-running:
 //   node scripts/build-strikes.mjs
+// Sources are real news/encyclopedia URLs (VIEW SOURCE links).
 import { writeFile } from "node:fs/promises";
 
-const wp = (t) => `https://en.wikipedia.org/wiki/${t}`;
-// [id, name, lat, lon, date, stype, actor, target, fatalities|null, confidence, country, wikiTitle, note]
+const CUTOFF_DAYS = 60;
+
+// real article / timeline URLs gathered from current reporting
+const U = {
+  aj0608: "https://www.aljazeera.com/news/2026/6/8/israel-and-iran-exchange-attacks-as-ceasefire-falters",
+  aj0618: "https://www.aljazeera.com/news/2026/6/18/israeli-attacks-on-southern-lebanon-kill-three-despite-us-iran-deal",
+  aj0620: "https://www.aljazeera.com/news/2026/6/20/us-envoy-headed-for-switzerland-israeli-strikes-on-lebanon-threaten-talks",
+  cnn0525: "https://www.cnn.com/2026/05/25/world/live-news/iran-war-us-peace-deal",
+  npr0607: "https://www.npr.org/2026/06/07/nx-s1-5849220/israel-lebanon-beirut-airstrike-ceasefire",
+  alarabiyaSyria: "https://english.alarabiya.net/News/middle-east/2026/06/24/us-forces-killed-isis-leader-in-syria-airstrike-centcom-says",
+  lwjHouthi: "https://www.longwarjournal.org/archives/2026/06/houthis-attack-israel-and-announce-ban-on-israeli-vessels-in-the-red-sea.php",
+  wikiLeb: "https://en.wikipedia.org/wiki/Timeline_of_the_2026_Lebanon_war",
+  wikiIran: "https://en.wikipedia.org/wiki/2026_Iran_war",
+  wikiGaza: "https://en.wikipedia.org/wiki/Gaza_war",
+};
+
 const S = [
-  ["damascus-consulate-2024", "Israeli strike on Iranian consulate, Damascus", 33.5102, 36.2913, "2024-04-01", "Airstrike", "Israel", "IRGC officers", 16, "HIGH", "Syria", "2024_Israeli_strike_on_the_Iranian_consulate_in_Damascus", "Killed senior IRGC Quds Force commanders; triggered Iran's April 2024 retaliation."],
-  ["apr2024-iran-barrage", "Iran launches drone & missile barrage at Israel", 31.05, 35.01, "2024-04-14", "Drone & Missile Barrage", "Iran", "military", 0, "HIGH", "Israel", "April_2024_Iranian_strikes_against_Israel", "'True Promise' — ~300 drones and missiles launched at Israel; nearly all intercepted."],
-  ["apr2024-isr-isfahan", "Israeli strike near Isfahan air base", 32.65, 51.67, "2024-04-19", "Airstrike", "Israel", "air defense", 0, "HIGH", "Iran", "April_2024_Iranian_strikes_against_Israel", "Limited retaliatory strike on an air-defense radar near Isfahan."],
-  ["shukr-2024", "Israeli strike in Beirut kills Fuad Shukr", 33.86, 35.51, "2024-07-30", "Airstrike", "Israel", "Hezbollah leadership", 7, "HIGH", "Lebanon", "Assassination_of_Fuad_Shukr", "Targeted strike on a senior Hezbollah commander in the southern suburbs."],
-  ["tlv-2024-07-houthi", "Houthi drone strike on Tel Aviv", 32.07, 34.77, "2024-07-19", "Drone Strike", "Houthis", "civilian", 1, "HIGH", "Israel", "July_2024_Tel_Aviv_drone_attack", "A long-range drone evaded defenses and struck central Tel Aviv."],
-  ["hodeidah-2024-07", "Israel strikes Hodeidah port, Yemen", 14.80, 42.95, "2024-07-20", "Airstrike", "Israel", "port / fuel depot", 6, "HIGH", "Yemen", "Israeli_airstrikes_on_Yemen", "Retaliation for the Houthi drone strike on Tel Aviv."],
-  ["pagers-2024", "Pager & device explosions across Lebanon", 33.89, 35.50, "2024-09-17", "Covert Attack", "Israel", "Hezbollah", 42, "MEDIUM", "Lebanon", "2024_Lebanon_electronic_device_attacks", "Thousands of Hezbollah pagers and radios detonated simultaneously."],
-  ["nasrallah-2024", "Israeli airstrike kills Hassan Nasrallah, Beirut", 33.857, 35.495, "2024-09-27", "Airstrike", "Israel", "Hezbollah leadership", 6, "HIGH", "Lebanon", "Assassination_of_Hassan_Nasrallah", "Massive strike on Hezbollah's underground HQ in the Dahieh."],
-  ["lebanon-ground-2024", "Israeli ground & air operations in south Lebanon", 33.27, 35.20, "2024-10-01", "Ground & Air Operation", "Israel", "Hezbollah", null, "HIGH", "Lebanon", "2024_Israeli_invasion_of_Lebanon", "Cross-border operation against Hezbollah positions."],
-  ["oct2024-iran-barrage", "Iran fires ~180 ballistic missiles at Israel", 32.08, 34.78, "2024-10-01", "Ballistic Missile Strike", "Iran", "military", 1, "HIGH", "Israel", "October_2024_Iranian_strikes_against_Israel", "'True Promise 2' — barrage on Nevatim, Tel Nof and Mossad HQ; one killed in the West Bank."],
-  ["oct2024-isr-iran", "Israel strikes Iranian military sites", 35.70, 51.42, "2024-10-26", "Airstrike", "Israel", "military / missile production", 5, "HIGH", "Iran", "October_2024_Israeli_strikes_on_Iran", "'Days of Repentance' — strikes on missile production and air-defense sites."],
-  ["tower22-2024", "Drone attack on Tower 22 base, Jordan", 32.49, 38.20, "2024-01-28", "Drone Strike", "Iran-backed militia", "US military base", 3, "HIGH", "Jordan", "Tower_22_drone_attack", "Killed three US soldiers; prompted broad US retaliation."],
-  ["us-iraqsyria-feb2024", "US retaliatory strikes in Iraq & Syria", 34.38, 41.00, "2024-02-02", "Airstrike", "United States", "militia sites", 16, "HIGH", "Iraq / Syria", "February_2024_United_States_airstrikes_in_Iraq_and_Syria", "85+ targets struck in response to the Tower 22 attack."],
-  ["yem-2024-01-sanaa", "US–UK airstrikes on Houthi sites in Sanaa", 15.37, 44.19, "2024-01-12", "Airstrike", "United States / UK", "military", null, "HIGH", "Yemen", "January_2024_missile_strikes_in_Yemen", "First major Western strikes on Houthi launch and radar sites."],
-  ["redsea-shipping-2024", "Houthi attacks on Red Sea shipping", 13.6, 42.8, "2024-01-15", "Anti-ship Missile / Drone", "Houthis", "commercial shipping", null, "MEDIUM", "Red Sea", "Red_Sea_crisis", "Sustained missile and drone attacks on vessels near the Bab-el-Mandeb."],
-  ["yem-2025-roughrider", "US launches sustained strikes on the Houthis", 15.37, 44.19, "2025-03-15", "Airstrike", "United States", "military", null, "HIGH", "Yemen", "2025_United_States_attacks_in_Yemen", "Weeks-long air campaign against Houthi targets across Yemen."],
-  ["bgn-2025-05-houthi", "Houthi missile hits near Ben Gurion Airport", 32.00, 34.87, "2025-05-04", "Ballistic Missile Strike", "Houthis", "airport", 6, "HIGH", "Israel", "2025_Ben_Gurion_Airport_missile_attack", "A ballistic missile evaded defenses and struck airport grounds."],
-  ["jun2025-isr-natanz", "Israel strikes Natanz enrichment facility", 33.7225, 51.7269, "2025-06-13", "Nuclear Facility Strike", "Israel", "nuclear facility", null, "HIGH", "Iran", "Operation_Rising_Lion", "Opening strikes of the June 2025 war damaged the Natanz enrichment site."],
-  ["jun2025-isr-tehran", "Israeli airstrikes across Tehran", 35.70, 51.42, "2025-06-13", "Airstrike", "Israel", "military / leadership", null, "HIGH", "Iran", "Operation_Rising_Lion", "Strikes killed senior IRGC commanders and nuclear scientists."],
-  ["jun2025-isr-tabriz", "Israel strikes military sites in Tabriz", 38.07, 46.30, "2025-06-13", "Airstrike", "Israel", "military", null, "MEDIUM", "Iran", "Operation_Rising_Lion", "Air-defense and missile sites in the northwest hit."],
-  ["jun2025-isr-isfahan", "Israel strikes Isfahan nuclear site", 32.57, 51.82, "2025-06-14", "Nuclear Facility Strike", "Israel", "nuclear facility", null, "HIGH", "Iran", "Operation_Rising_Lion", "Strikes on the Isfahan nuclear technology complex."],
-  ["jun2025-isr-arak", "Israel strikes Arak heavy-water reactor", 34.37, 49.24, "2025-06-19", "Nuclear Facility Strike", "Israel", "nuclear facility", null, "HIGH", "Iran", "Operation_Rising_Lion", "The Khondab/Arak heavy-water reactor was targeted."],
-  ["jun2025-iran-telaviv", "Iran missile barrage hits Tel Aviv", 32.08, 34.78, "2025-06-13", "Ballistic Missile Strike", "Iran", "civilian / military", null, "HIGH", "Israel", "Operation_Rising_Lion", "Iranian ballistic missiles struck the Tel Aviv area in retaliation."],
-  ["jun2025-iran-haifa", "Iran missiles strike Haifa", 32.79, 34.99, "2025-06-15", "Ballistic Missile Strike", "Iran", "civilian / industrial", null, "HIGH", "Israel", "Operation_Rising_Lion", "Missiles hit the Haifa bay industrial area."],
-  ["jun2025-iran-beersheba", "Iran missile hits near Soroka Hospital, Beersheba", 31.26, 34.80, "2025-06-19", "Ballistic Missile Strike", "Iran", "civilian", null, "HIGH", "Israel", "Operation_Rising_Lion", "A ballistic missile struck near the Soroka Medical Center."],
-  ["jun2025-us-fordow", "US B-2 strike on Fordow enrichment plant", 34.8847, 50.9956, "2025-06-22", "Nuclear Facility Strike", "United States", "nuclear facility", null, "HIGH", "Iran", "Operation_Midnight_Hammer", "B-2 bombers dropped GBU-57 bunker-busters on the deeply buried Fordow site."],
-  ["jun2025-us-natanz", "US strike on Natanz nuclear site", 33.7225, 51.7269, "2025-06-22", "Nuclear Facility Strike", "United States", "nuclear facility", null, "HIGH", "Iran", "Operation_Midnight_Hammer", "Part of the coordinated US strike on Iran's nuclear program."],
-  ["jun2025-us-isfahan", "US cruise-missile strikes on Isfahan nuclear site", 32.57, 51.82, "2025-06-22", "Cruise Missile Strike", "United States", "nuclear facility", null, "HIGH", "Iran", "Operation_Midnight_Hammer", "Submarine-launched Tomahawks struck the Isfahan complex."],
-  ["jun2025-iran-aludeid", "Iran strikes Al Udeid Air Base, Qatar", 25.117, 51.315, "2025-06-23", "Ballistic Missile Strike", "Iran", "US military base", 0, "HIGH", "Qatar", "Operation_Midnight_Hammer", "Iran fired missiles at the US base in Qatar; intercepted, no casualties."],
-  ["syria-2025-isr", "Israeli strikes on military sites near Damascus", 33.51, 36.29, "2025-05-02", "Airstrike", "Israel", "military", null, "MEDIUM", "Syria", "Israeli_bombing_of_Syria", "Continued strikes on military infrastructure after the fall of Assad."],
-  ["baghdad-2024-militia", "US drone strike kills militia commander in Baghdad", 33.31, 44.36, "2024-02-07", "Drone Strike", "United States", "militia leadership", 3, "HIGH", "Iraq", "February_2024_United_States_airstrikes_in_Iraq_and_Syria", "Targeted a Kata'ib Hezbollah commander in eastern Baghdad."],
+  { id: "2026-0525-us-hormuz", name: "US strikes Iranian missile sites and boats near Hormuz", lat: 27.18, lon: 56.28, date: "2026-05-25", stype: "Naval & Missile-Site Strike", actor: "United States", target: "missile sites / boats", confidence: "MEDIUM", country: "Iran", source: "CNN", url: U.cnn0525, note: "US 'self-defense' strikes on Iranian missile launchers and fast boats near the Strait of Hormuz." },
+  { id: "2026-0608-iran-ramatdavid", name: "Iran fires ballistic missiles at Israel; Ramat David base hit", lat: 32.665, lon: 35.18, date: "2026-06-08", stype: "Ballistic Missile Strike", actor: "Iran", target: "military airbase", confidence: "HIGH", country: "Israel", source: "Al Jazeera", url: U.aj0608, note: "Iranian barrage as the ceasefire faltered; Ramat David Airbase was damaged." },
+  { id: "2026-0608-isr-tehran", name: "Israel strikes military sites in Tehran", lat: 35.70, lon: 51.42, date: "2026-06-08", stype: "Airstrike", actor: "Israel", target: "military", fatalities: 2, confidence: "HIGH", country: "Iran", source: "Al Jazeera", url: U.aj0608, note: "Explosions reported in Tehran, Isfahan and Tabriz; two Iranian soldiers killed." },
+  { id: "2026-0608-isr-isfahan", name: "Israel strikes Isfahan", lat: 32.65, lon: 51.67, date: "2026-06-08", stype: "Airstrike", actor: "Israel", target: "military", confidence: "MEDIUM", country: "Iran", source: "Al Jazeera", url: U.aj0608, note: "Part of the June 8 strikes after the ceasefire faltered." },
+  { id: "2026-0608-isr-tabriz", name: "Israel strikes Tabriz", lat: 38.07, lon: 46.30, date: "2026-06-08", stype: "Airstrike", actor: "Israel", target: "military", confidence: "MEDIUM", country: "Iran", source: "Al Jazeera", url: U.aj0608, note: "Part of the June 8 strikes after the ceasefire faltered." },
+  { id: "2026-0625-iran-vessel", name: "Iran attacks cargo vessel near Oman", lat: 24.5, lon: 57.7, date: "2026-06-25", stype: "Anti-ship Attack", actor: "Iran", target: "commercial shipping", confidence: "MEDIUM", country: "Gulf of Oman", source: "Wikipedia", url: U.wikiIran, note: "A cargo vessel was damaged by a projectile near Oman amid the Hormuz dispute." },
+  { id: "2026-0619-us-syria-isis", name: "US airstrike kills ISIS leader in northwest Syria", lat: 36.05, lon: 36.55, date: "2026-06-19", stype: "Drone Strike", actor: "United States", target: "ISIS leadership", fatalities: 1, confidence: "HIGH", country: "Syria", source: "Al Arabiya", url: U.alarabiyaSyria, note: "CENTCOM strike killed senior ISIS figure Ali Husayn al-'Ulaywi." },
+  { id: "2026-0619-isr-khanyounis", name: "Israeli strike kills Islamic Jihad commander in Khan Younis", lat: 31.34, lon: 34.30, date: "2026-06-19", stype: "Airstrike", actor: "Israel", target: "militant leadership", confidence: "MEDIUM", country: "Gaza", source: "Wikipedia", url: U.wikiGaza, note: "Strike on Khan Younis killed the commander of Islamic Jihad's Khan Younis Brigade." },
+  { id: "2026-0504-isr-tyre", name: "Israeli strikes on Tyre district", lat: 33.27, lon: 35.20, date: "2026-05-04", stype: "Airstrike", actor: "Israel", target: "Hezbollah infrastructure", confidence: "MEDIUM", country: "Lebanon", source: "Wikipedia", url: U.wikiLeb, note: "Strikes on Hezbollah infrastructure in the Tyre district." },
+  { id: "2026-0506-isr-beirut", name: "Israeli strike kills Radwan commander in Beirut", lat: 33.86, lon: 35.50, date: "2026-05-06", stype: "Airstrike", actor: "Israel", target: "Hezbollah commander", fatalities: 1, confidence: "HIGH", country: "Lebanon", source: "Wikipedia", url: U.wikiLeb, note: "Killed Radwan Force commander Ahmed Ghaleb Balout in Ghobeiry." },
+  { id: "2026-0515-isr-civdef", name: "Israeli strike hits civil-defense center, south Lebanon", lat: 33.30, lon: 35.30, date: "2026-05-15", stype: "Airstrike", actor: "Israel", target: "civil defense", fatalities: 6, confidence: "MEDIUM", country: "Lebanon", source: "Wikipedia", url: U.wikiLeb, note: "Six killed including three paramedics; 22 injured." },
+  { id: "2026-0518-isr-baalbek", name: "Israeli strike near Baalbek kills PIJ commander", lat: 34.00, lon: 36.21, date: "2026-05-18", stype: "Airstrike", actor: "Israel", target: "militant leadership", fatalities: 2, confidence: "MEDIUM", country: "Lebanon", source: "Wikipedia", url: U.wikiLeb, note: "Killed a Palestinian Islamic Jihad commander and his daughter." },
+  { id: "2026-0529-isr-slebanon", name: "Israeli strikes across south Lebanon", lat: 33.30, lon: 35.25, date: "2026-05-29", stype: "Airstrike", actor: "Israel", target: "multiple sites", fatalities: 142, confidence: "HIGH", country: "Lebanon", source: "Wikipedia", url: U.wikiLeb, note: "142 killed in 72 hours of widespread strikes." },
+  { id: "2026-0607-isr-dahieh", name: "Israel strikes Beirut's southern suburbs", lat: 33.86, lon: 35.50, date: "2026-06-07", stype: "Airstrike", actor: "Israel", target: "Hezbollah", fatalities: 2, confidence: "HIGH", country: "Lebanon", source: "NPR", url: U.npr0607, note: "Retaliatory strike on the Dahieh; two killed, 11 wounded." },
+  { id: "2026-0609-isr-tyre", name: "Israeli strikes on Tyre", lat: 33.27, lon: 35.20, date: "2026-06-09", stype: "Airstrike", actor: "Israel", target: "Hezbollah positions", fatalities: 8, confidence: "MEDIUM", country: "Lebanon", source: "Wikipedia", url: U.wikiLeb, note: "Eight killed, 32 injured in strikes on Tyre." },
+  { id: "2026-0610-isr-sidon", name: "Israeli strikes across southern Lebanon", lat: 33.56, lon: 35.37, date: "2026-06-10", stype: "Airstrike", actor: "Israel", target: "multiple sites", fatalities: 19, confidence: "MEDIUM", country: "Lebanon", source: "Wikipedia", url: U.wikiLeb, note: "19 killed across Tyre, Sidon and nearby towns." },
+  { id: "2026-0614-isr-daqduq", name: "Israeli strike kills senior Hezbollah commander Daqduq", lat: 33.30, lon: 35.30, date: "2026-06-14", stype: "Airstrike", actor: "Israel", target: "Hezbollah commander", fatalities: 1, confidence: "HIGH", country: "Lebanon", source: "Wikipedia", url: U.wikiLeb, note: "Killed senior commander Ali Musa Daqduq in south Lebanon." },
+  { id: "2026-0618-isr-slebanon", name: "Israeli strikes kill dozens in southern Lebanon", lat: 33.27, lon: 35.20, date: "2026-06-18", stype: "Airstrike", actor: "Israel", target: "Hezbollah", fatalities: 47, confidence: "HIGH", country: "Lebanon", source: "Al Jazeera", url: U.aj0618, note: "At least 47 killed amid intense fighting despite the US-Iran deal." },
+  { id: "2026-0620-isr-lebanon", name: "Israeli strikes kill dozens in Lebanon amid truce talks", lat: 33.30, lon: 35.30, date: "2026-06-20", stype: "Airstrike", actor: "Israel", target: "Hezbollah", fatalities: 83, confidence: "HIGH", country: "Lebanon", source: "Al Jazeera", url: U.aj0620, note: "Over 100 strikes on south Lebanon just after a renewed ceasefire was announced." },
+  { id: "2026-0608-houthi-telaviv", name: "Houthi missile & drone barrage on Tel Aviv area", lat: 32.08, lon: 34.78, date: "2026-06-08", stype: "Missile & Drone Barrage", actor: "Houthis", target: "military / civilian", confidence: "MEDIUM", country: "Israel", source: "FDD's Long War Journal", url: U.lwjHouthi, note: "Houthis fired at the Tel Aviv area in coordination with Iran and Hezbollah." },
+  { id: "2026-0609-houthi-eilat", name: "Houthi cruise missiles & drones target Eilat", lat: 29.55, lon: 34.95, date: "2026-06-09", stype: "Cruise Missile & Drone Strike", actor: "Houthis", target: "military sites", confidence: "MEDIUM", country: "Israel", source: "FDD's Long War Journal", url: U.lwjHouthi, note: "Houthis claimed strikes on Eilat; air defenses engaged." },
 ];
 
-const out = S.map(([id, name, lat, lon, date, stype, actor, target, fatalities, confidence, country, wiki, note]) => {
-  const o = {
-    id,
-    name,
-    lat,
-    lon,
-    time: new Date(`${date}T12:00:00Z`).getTime(),
-    stype,
-    actor,
-    target,
-    confidence,
-    source: "Wikipedia",
-    url: wp(wiki),
-    country,
-    note,
-  };
-  if (fatalities != null) o.fatalities = fatalities;
-  return o;
-});
-
+const cutoff = Date.now() - CUTOFF_DAYS * 86_400_000;
+let dropped = 0;
+const out = [];
+for (const s of S) {
+  const time = new Date(`${s.date}T12:00:00Z`).getTime();
+  if (time < cutoff) { dropped++; continue; }
+  const { date, ...rest } = s;
+  out.push({ ...rest, time });
+}
 out.sort((a, b) => b.time - a.time); // most recent first
 await writeFile(new URL("../public/strikes.json", import.meta.url), JSON.stringify(out));
-console.log(`Strikes: ${out.length} -> public/strikes.json`);
+console.log(`Strikes: ${out.length} kept, ${dropped} dropped (older than ${CUTOFF_DAYS}d) -> public/strikes.json`);
+if (out.length) console.log(`newest: ${new Date(out[0].time).toISOString().slice(0,10)}  oldest: ${new Date(out[out.length-1].time).toISOString().slice(0,10)}`);
