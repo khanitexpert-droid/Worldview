@@ -63,6 +63,7 @@ export const HORMUZ_DEFAULT: HormuzState = {
 interface WorldViewState {
   layers: Record<LayerId, boolean>;
   toggleLayer: (id: LayerId) => void;
+  clearLayers: () => void;
 
   selected: FeedEntity | null;
   setSelected: (e: FeedEntity | null) => void;
@@ -155,6 +156,11 @@ export const useWorldView = create<WorldViewState>((set) => ({
   layers: initialLayers,
   toggleLayer: (id) =>
     set((s) => ({ layers: { ...s.layers, [id]: !s.layers[id] } })),
+  clearLayers: () =>
+    set({
+      layers: Object.fromEntries(LAYERS.map((l) => [l.id, false])) as Record<LayerId, boolean>,
+      selected: null,
+    }),
 
   selected: null,
   // picking an entity on the globe shows the compact SelectedPopup (driven by

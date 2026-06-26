@@ -5,10 +5,9 @@ import Controls from "./Controls";
 import LayerCategories from "./LayerCategories";
 
 /**
- * Top bar (Google-Maps-style shell). Left: utility tabs (Intel · Add Data ·
- * Tools) that open the right-side overlay panels — styled identically to the
- * layer-category tabs (pill + colored dot). Then the layer categories. Right:
- * Reset / Locate.
+ * Top bar (deltasweep-style shell). Left: the layer-category tabs. Right: utility
+ * tabs (Intel · Add Data · Tools) + Clear + view controls — all styled as pills
+ * with a colored dot.
  */
 const TABS: { id: RightPanel; label: string; color: string }[] = [
   { id: "intel", label: "INTEL", color: "#ff2d95" },
@@ -25,8 +24,12 @@ export default function TopBar({
 }) {
   const open = useWorldView((s) => s.rightPanel);
   const toggle = useWorldView((s) => s.toggleRightPanel);
+  const clearLayers = useWorldView((s) => s.clearLayers);
   const intelCount = useWorldView((s) => s.intel.length);
   const userLayerCount = useWorldView((s) => s.userLayers.length);
+  const activeCount = useWorldView((s) =>
+    Object.values(s.layers).filter(Boolean).length
+  );
   const countFor = (id: RightPanel) =>
     id === "intel" ? intelCount : id === "userdata" ? userLayerCount : 0;
 
@@ -35,7 +38,11 @@ export default function TopBar({
       className="fixed left-0 right-0 top-0 z-50 flex h-14 items-center gap-1 border-b border-wv-border px-2 backdrop-blur-md"
       style={{ background: "rgba(7,4,14,0.96)" }}
     >
-      <div className="flex items-center gap-1">
+      {/* layer categories — left */}
+      <LayerCategories />
+
+      {/* utility tabs + clear + controls — pushed right */}
+      <div className="ml-auto flex items-center gap-1">
         {TABS.map((t) => {
           const on = open === t.id;
           const count = countFor(t.id);
@@ -58,18 +65,29 @@ export default function TopBar({
                 style={{ background: t.color, boxShadow: on ? `0 0 6px ${t.color}` : "none" }}
               />
               {t.label}
-              {count > 0 && (
-                <span className="tabular-nums opacity-80">{count}</span>
-              )}
+              {count > 0 && <span className="tabular-nums opacity-80">{count}</span>}
             </button>
           );
         })}
-      </div>
 
-      <span className="mx-1 h-7 w-px bg-wv-border" />
-      <LayerCategories />
+        {/* CLEAR — turn off every active data layer */}
+        <button
+          onClick={clearLayers}
+          disabled={activeCount === 0}
+          title="Clear all active layers"
+          aria-label="Clear all active layers"
+          className="flex items-center gap-1.5 rounded-sm border border-wv-border px-2 py-1.5 text-[10px] font-bold tracking-[0.1em] transition-colors enabled:hover:border-wv-red enabled:hover:text-wv-red disabled:opacity-40"
+          style={{ color: activeCount > 0 ? "#ff4d4d" : "var(--wv-muted)" }}
+        >
+          <span
+            className="inline-block h-1.5 w-1.5 rounded-full"
+            style={{ background: "#ff4d4d", boxShadow: activeCount > 0 ? "0 0 6px #ff4d4d" : "none" }}
+          />
+          CLEAR
+          {activeCount > 0 && <span className="tabular-nums opacity-80">{activeCount}</span>}
+        </button>
 
-      <div className="ml-auto flex items-center">
+        <span className="mx-1 h-7 w-px bg-wv-border" />
         <Controls onReset={onReset} onLocate={onLocate} />
       </div>
     </div>
