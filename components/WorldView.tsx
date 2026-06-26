@@ -36,6 +36,7 @@ import {
   fetchConflicts,
   fetchHormuzIncidents,
   fetchHormuzVuln,
+  fetchHormuzVessels,
 } from "@/lib/feeds";
 import type {
   Flight,
@@ -442,53 +443,24 @@ const HORMUZ_ZONE: import("@/lib/types").HormuzZone = {
     [56.7, 25.6],
   ],
 };
-const SANCTIONED_FLAGS = new Set(["Iran", "Russia", "North Korea", "Syria", "Venezuela"]);
 function vulnClassColor(cls: string): Cesium.Color {
   if (cls === "Most vulnerable") return Cesium.Color.fromCssColorString("#e0294a");
   if (cls === "Vulnerable") return Cesium.Color.fromCssColorString("#ff9e3c");
   if (cls === "Moderate") return Cesium.Color.fromCssColorString("#ffd23c");
   return Cesium.Color.fromCssColorString("#5dd6a0"); // Low
 }
-// map live AIS ships (within the Gulf/Strait/Gulf of Oman) → HormuzVessel[].
-function toHormuzVessels(ships: Ship[]): HormuzVessel[] {
-  const out: HormuzVessel[] = [];
-  for (const s of ships) {
-    if (s.lon < 47 || s.lon > 61 || s.lat < 22 || s.lat > 30.5) continue;
-    const course = s.heading ?? 0;
-    const inbound = (course >= 200 && course <= 360) || (course >= 0 && course <= 40);
-    const vtype = (s.type || "VESSEL").toUpperCase();
-    const sanctioned = !!(s.flag && SANCTIONED_FLAGS.has(s.flag));
-    const aisGap = s.timePosition ? Date.now() - s.timePosition > 3_600_000 : true;
-    out.push({
-      id: s.id,
-      name: s.name || "VESSEL",
-      lon: s.lon,
-      lat: s.lat,
-      vtype,
-      flag: s.flag,
-      destination: s.destination,
-      asOf: s.timePosition,
-      imo: s.imo,
-      mmsi: s.id,
-      speed: s.speed,
-      course: s.heading,
-      direction: inbound ? "in" : "out",
-      riskTier: sanctioned || vtype === "TANKER" ? "High" : "Low",
-      sanctioned,
-      aisGap,
-    });
-  }
-  return out;
-}
-// render the active Hormuz sub-layers + set the panel's live stats.
+// render the active Hormuz sub-layers (vessels into a separate clustered
+// datasource) + set the panel's live stats.
 function renderHormuz(
   ds: Cesium.CustomDataSource,
+  vesselDs: Cesium.CustomDataSource,
   sel: SelMap,
   data: { vessels: HormuzVessel[]; incidents: HormuzIncident[]; vuln: HormuzVuln[] },
   hf: HormuzState,
   setStats: (s: HormuzStats | null) => void
 ) {
   ds.entities.removeAll();
+  vesselDs.entities.removeAll();
 
   // ---- Vulnerability choropleth (drawn first, under everything) ----
   if (hf.vulnerability) {
@@ -545,7 +517,7 @@ function renderHormuz(
     }
   }
 
-  // ---- Crossings (live AIS) + stats ----
+  // ---- Crossings (fabricated fleet) → clustered vessel datasource + stats ----
   const all = data.vessels;
   let v = all;
   if (hf.sanctionedOnly) v = v.filter((x) => x.sanctioned);
@@ -560,8 +532,8 @@ function renderHormuz(
     const sanctC = Cesium.Color.fromCssColorString("#ff2d95");
     for (const x of v) {
       const eid = `hormuzVessel:${x.id}`;
-      if (ds.entities.getById(eid)) continue;
-      ds.entities.add({
+      if (vesselDs.entities.getById(eid)) continue;
+      const ent = vesselDs.entities.add({
         id: eid,
         position: Cesium.Cartesian3.fromDegrees(x.lon, x.lat, 0),
         point: {
@@ -572,6 +544,8 @@ function renderHormuz(
           scaleByDistance: new Cesium.NearFarScalar(2.0e5, 1.15, 4.0e7, 0.35),
         },
       });
+      // tag for cluster coloring (majority direction)
+      (ent as unknown as { __dir: string }).__dir = x.direction;
       sel.set(eid, { kind: "hormuzVessel", ...x });
     }
   }
@@ -994,8 +968,9 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const shipRoutesLayerRef = useRef<Cesium.ImageryLayer | null>(null);
   // ---- land cover (ESA WorldCover WMTS) imagery layer, lazily created ----
   const landCoverLayerRef = useRef<Cesium.ImageryLayer | null>(null);
-  // ---- Strait of Hormuz dashboard datasource ----
+  // ---- Strait of Hormuz dashboard datasources (vessels clustered separately) ----
   const hormuzDsRef = useRef<Cesium.CustomDataSource | null>(null);
+  const hormuzVesselDsRef = useRef<Cesium.CustomDataSource | null>(null);
   // ---- Google Photorealistic 3D Tiles (lazy-created scene primitive) ----
   const tilesetRef = useRef<Cesium.Cesium3DTileset | null>(null);
   const photorealLoadingRef = useRef(false);
@@ -2169,40 +2144,66 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
       hormuzDsRef.current = new Cesium.CustomDataSource("hormuz");
       viewer.dataSources.add(hormuzDsRef.current);
     }
+    if (viewer && !hormuzVesselDsRef.current) {
+      const vds = new Cesium.CustomDataSource("hormuzVessels");
+      viewer.dataSources.add(vds);
+      // cluster vessels into numbered bubbles (deltasweep-style), colored by the
+      // majority transit direction in each cluster.
+      vds.clustering.enabled = true;
+      vds.clustering.pixelRange = 34;
+      vds.clustering.minimumClusterSize = 4;
+      vds.clustering.clusterEvent.addEventListener((entities, cluster) => {
+        let inb = 0;
+        for (const e of entities)
+          if ((e as unknown as { __dir?: string }).__dir === "in") inb++;
+        const c =
+          inb * 2 >= entities.length
+            ? Cesium.Color.fromCssColorString("#5dff9e")
+            : Cesium.Color.fromCssColorString("#ff5630");
+        cluster.label.show = true;
+        cluster.label.text = String(entities.length);
+        cluster.label.font = "bold 12px sans-serif";
+        cluster.label.fillColor = Cesium.Color.WHITE;
+        cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+        cluster.billboard.show = false;
+        cluster.point.show = true;
+        cluster.point.color = c.withAlpha(0.85);
+        cluster.point.outlineColor = c;
+        cluster.point.outlineWidth = 1;
+        cluster.point.pixelSize = Math.min(16 + Math.sqrt(entities.length) * 2.6, 46);
+      });
+      hormuzVesselDsRef.current = vds;
+    }
     if (!hormuzOn) return;
     let cancelled = false;
     (async () => {
-      const [inc, vuln] = await Promise.all([fetchHormuzIncidents(), fetchHormuzVuln()]);
-      if (!cancelled) setHormuzData((d) => ({ ...d, incidents: inc.items, vuln: vuln.items }));
+      const [inc, vuln, ves] = await Promise.all([
+        fetchHormuzIncidents(),
+        fetchHormuzVuln(),
+        fetchHormuzVessels(),
+      ]);
+      if (!cancelled)
+        setHormuzData({ incidents: inc.items, vuln: vuln.items, vessels: ves.items });
     })();
-    const loadAis = async () => {
-      try {
-        const s = await fetchShips();
-        if (!cancelled) setHormuzData((d) => ({ ...d, vessels: toHormuzVessels(s.items) }));
-      } catch {
-        /* AIS relay unavailable → leave vessels empty */
-      }
-    };
-    loadAis();
-    const iv = setInterval(loadAis, 60000);
     return () => {
       cancelled = true;
-      clearInterval(iv);
     };
   }, [hormuzOn, ready]);
 
   // ---- Strait of Hormuz: (re)render the active sub-layers + panel stats ----
   useEffect(() => {
     const ds = hormuzDsRef.current;
-    if (!ds || !ready) return;
+    const vds = hormuzVesselDsRef.current;
+    if (!ds || !vds || !ready) return;
     for (const k of [...selMapRef.current.keys()])
       if (k.startsWith("hormuz")) selMapRef.current.delete(k);
     if (!hormuzOn) {
       ds.entities.removeAll();
+      vds.entities.removeAll();
       setHormuzStats(null);
       return;
     }
-    renderHormuz(ds, selMapRef.current, hormuzData, hormuzFilters, setHormuzStats);
+    renderHormuz(ds, vds, selMapRef.current, hormuzData, hormuzFilters, setHormuzStats);
   }, [hormuzOn, hormuzFilters, hormuzData, ready, setHormuzStats]);
 
   // ---- world events: stream headlines to intel + drive the breaking-news radar ----

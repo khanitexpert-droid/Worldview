@@ -15,6 +15,7 @@ import type {
   Conflict,
   HormuzIncident,
   HormuzVuln,
+  HormuzVessel,
 } from "./types";
 
 export interface SatellitesResponse {
@@ -113,3 +114,5 @@ export const fetchHormuzIncidents = () =>
   staticInfra<HormuzIncident>("/hormuz_incidents.json", "CURATED · OSINT");
 export const fetchHormuzVuln = () =>
   staticInfra<HormuzVuln>("/hormuz_vulnerability.json", "CURATED");
+export const fetchHormuzVessels = () =>
+  staticInfra<HormuzVessel>("/hormuz_vessels.json", "FABRICATED · DEMO");
