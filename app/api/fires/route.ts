@@ -11,7 +11,10 @@ export const dynamic = "force-dynamic";
 //   SOURCE = VIIRS_SNPP_NRT (Suomi-NPP, near-real-time)
 //   AREA   = world   DAY_RANGE = 1 (last 24h)
 const SOURCE = "VIIRS_SNPP_NRT";
-const DAY_RANGE = 1;
+// 2 days, not 1: FIRMS DAY_RANGE counts the current UTC calendar day, which is
+// nearly empty early in the day (e.g. 1 fire at 04:00 UTC). Requesting 2 days
+// always includes a full prior day, then MAX_FIRES keeps the hottest/most recent.
+const DAY_RANGE = 2;
 // world/day VIIRS can be tens of thousands of pixels; keep the globe smooth by
 // rendering only the most intense detections (by fire radiative power). Still
 // 100% real data — just the hottest fires first.
