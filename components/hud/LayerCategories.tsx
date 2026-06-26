@@ -18,7 +18,7 @@ const CATS: { id: string; color: string }[] = [
   { id: "3D VIEW", color: "#5dff9e" },
 ];
 
-export default function LayerCategories() {
+export default function LayerCategories({ className }: { className?: string }) {
   const layers = useWorldView((s) => s.layers);
   const counts = useWorldView((s) => s.counts);
   const toggleLayer = useWorldView((s) => s.toggleLayer);
@@ -43,7 +43,7 @@ export default function LayerCategories() {
   }, [selected]);
 
   return (
-    <div ref={ref} className="flex items-center gap-1">
+    <div ref={ref} className={className ?? "flex items-center gap-1"}>
       {CATS.map((cat) => {
         const items = LAYERS.filter((l) => l.group === cat.id);
         if (!items.length) return null;

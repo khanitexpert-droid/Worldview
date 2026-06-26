@@ -38,11 +38,11 @@ export default function TopBar({
       className="fixed left-0 right-0 top-0 z-50 flex h-14 items-center gap-1 border-b border-wv-border px-2 backdrop-blur-md"
       style={{ background: "rgba(7,4,14,0.96)" }}
     >
-      {/* layer categories — left */}
-      <LayerCategories />
+      {/* layer categories — spread across the bar to fill the width */}
+      <LayerCategories className="flex flex-1 items-center justify-between gap-1 pr-2" />
 
-      {/* utility tabs + clear + controls — pushed right */}
-      <div className="ml-auto flex items-center gap-1">
+      {/* utility tabs + clear + controls — kept compact on the right */}
+      <div className="flex shrink-0 items-center gap-1">
         {TABS.map((t) => {
           const on = open === t.id;
           const count = countFor(t.id);
