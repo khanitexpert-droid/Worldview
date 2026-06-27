@@ -381,6 +381,44 @@ const INFRA_POINT_KINDS = new Set<LayerId>([
   "ports",
 ]);
 const INFRA_LINE_KINDS = new Set<LayerId>(["pipelines", "cables"]);
+
+// Dense point layers get clustering — when zoomed out, thousands of markers
+// collapse into a few numbered bubbles (deltasweep-style) instead of every dot
+// being drawn at once. This is the difference between "enable all layers" staying
+// smooth vs. flooding the GPU. Mirrors the Hormuz vessel clustering.
+const CLUSTER_LAYERS = new Set<LayerId>([
+  "airports",
+  "lng",
+  "nuclear",
+  "oilgas",
+  "refineries",
+  "minerals",
+  "datacenters",
+  "desal",
+  "ports",
+  "bases",
+]);
+function enableClustering(ds: Cesium.CustomDataSource, cssColor: string) {
+  ds.clustering.enabled = true;
+  ds.clustering.pixelRange = 38;
+  ds.clustering.minimumClusterSize = 6;
+  const col = Cesium.Color.fromCssColorString(cssColor);
+  ds.clustering.clusterEvent.addEventListener((entities, cluster) => {
+    cluster.label.show = true;
+    cluster.label.text = String(entities.length);
+    cluster.label.font = "bold 11px sans-serif";
+    cluster.label.fillColor = Cesium.Color.WHITE;
+    cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+    cluster.billboard.show = false;
+    cluster.point.show = true;
+    cluster.point.color = col.withAlpha(0.85);
+    cluster.point.outlineColor = col;
+    cluster.point.outlineWidth = 1;
+    cluster.point.pixelSize = Math.min(14 + Math.sqrt(entities.length) * 2.4, 42);
+    cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+  });
+}
+
 // GDP-per-capita color ramp endpoints (low → mid → high).
 const GDP_LO = Cesium.Color.fromCssColorString("#ff414e");
 const GDP_MID = Cesium.Color.fromCssColorString("#ffb347");
@@ -460,6 +498,8 @@ function renderHormuz(
 ) {
   ds.entities.removeAll();
   vesselDs.entities.removeAll();
+  // clear this dashboard's own stale selection entries (all hormuz* prefixes)
+  for (const k of [...sel.keys()]) if (k.startsWith("hormuz")) sel.delete(k);
 
   // ---- Vulnerability choropleth (drawn first, under everything) ----
   if (hf.vulnerability) {
@@ -600,6 +640,9 @@ function renderLayer(
   sel: SelMap
 ) {
   ds.entities.removeAll();
+  // drop this layer's own stale selection entries (each layer manages its own
+  // prefix now, so toggling one layer no longer wipes everyone's selections).
+  for (const k of [...sel.keys()]) if (k.startsWith(id + ":")) sel.delete(k);
 
   if (id === "earthquakes") {
     for (const q of items as import("@/lib/types").Earthquake[]) {
@@ -776,6 +819,10 @@ function renderLayer(
   // ---- INFRA line layers (pipelines / submarine cables): polyline routes ----
   if (INFRA_LINE_KINDS.has(id)) {
     const col = Cesium.Color.fromCssColorString(LAYER_BY_ID[id].color);
+    // pipeline paths are already dense vertex lists, so geodesic subdivision just
+    // multiplies vertices for no visible gain — straight segments (NONE) are far
+    // lighter. Cables span open ocean with sparse points, so keep them geodesic.
+    const arc = id === "cables" ? Cesium.ArcType.GEODESIC : Cesium.ArcType.NONE;
     for (const ln of items as InfraLine[]) {
       let seg = 0;
       for (const path of ln.paths || []) {
@@ -788,7 +835,7 @@ function renderLayer(
             positions: Cesium.Cartesian3.fromDegreesArray(path.flat()),
             width: 1.6,
             material: col.withAlpha(0.65),
-            arcType: Cesium.ArcType.GEODESIC,
+            arcType: arc,
           },
         });
         sel.set(eid, { kind: id as InfraLineKind, ...ln });
@@ -844,7 +891,7 @@ function renderLayer(
             positions: Cesium.Cartesian3.fromDegreesArray(path.flat()),
             width: 2,
             material: col.withAlpha(0.85),
-            arcType: Cesium.ArcType.GEODESIC,
+            arcType: Cesium.ArcType.NONE,
           },
         });
         sel.set(eid, { kind: "majorrivers", ...r });
@@ -929,6 +976,13 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const dsMapRef = useRef<Map<LayerId, Cesium.CustomDataSource>>(new Map());
+  // last data array rendered per layer — lets the render effect skip layers whose
+  // data hasn't changed (so toggling one layer doesn't rebuild all the others).
+  const renderedDataRef = useRef<Map<LayerId, unknown[]>>(new Map());
+  // one poll interval per enabled layer (started/stopped independently)
+  const pollTimersRef = useRef<Map<PollLayerId, ReturnType<typeof setInterval>>>(
+    new Map()
+  );
   const selMapRef = useRef<SelMap>(new Map());
   const selDsRef = useRef<Cesium.CustomDataSource | null>(null);
   const loadedRef = useRef<Set<LayerId>>(new Set());
@@ -1557,43 +1611,56 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     if (v && ready) v.scene.canvas.style.cursor = activeTool ? "crosshair" : "";
   }, [activeTool, ready]);
 
-  // ---- polling: only enabled layers ----
+  // ---- polling: per-layer, idempotent ----
+  // Each enabled layer keeps its OWN interval in pollTimersRef. Toggling one
+  // layer only starts/stops that layer's timer — it must NOT refetch every other
+  // active layer (doing so produced fresh data refs that rebuilt every layer on
+  // each toggle, which is what crashed "enable-all-layers").
   useEffect(() => {
     if (!ready) return;
-    const timers: ReturnType<typeof setInterval>[] = [];
 
     (Object.keys(FETCHERS) as PollLayerId[]).forEach((id) => {
-      if (!layers[id]) {
-        // clear disabled layer data
-        setData((d) => (d[id].length ? { ...d, [id]: [] } : d));
-        return;
-      }
-      const run = async () => {
-        try {
-          const res = await FETCHERS[id]();
-          const items = res.items;
-          setData((d) => ({ ...d, [id]: items }));
-          setCount(id, items.length);
-          if (!loadedRef.current.has(id)) {
-            loadedRef.current.add(id);
-            const meta = LAYERS.find((l) => l.id === id)!;
-            pushIntel(
-              `${meta.source} · ${items.length} contacts acquired`,
-              meta.id === "earthquakes" ? "warn" : "info"
-            );
+      const on = !!layers[id];
+      const running = pollTimersRef.current.has(id);
+      if (on && !running) {
+        const run = async () => {
+          try {
+            const res = await FETCHERS[id]();
+            const items = res.items;
+            setData((d) => ({ ...d, [id]: items }));
+            setCount(id, items.length);
+            if (!loadedRef.current.has(id)) {
+              loadedRef.current.add(id);
+              const meta = LAYERS.find((l) => l.id === id)!;
+              pushIntel(
+                `${meta.source} · ${items.length} contacts acquired`,
+                meta.id === "earthquakes" ? "warn" : "info"
+              );
+            }
+          } catch (err) {
+            pushIntel(`${id.toUpperCase()} FEED ERROR`, "alert");
+            console.error(`[worldview] ${id} fetch failed`, err);
           }
-        } catch (err) {
-          pushIntel(`${id.toUpperCase()} FEED ERROR`, "alert");
-          console.error(`[worldview] ${id} fetch failed`, err);
-        }
-      };
-      run();
-      timers.push(setInterval(run, POLL_MS[id]));
+        };
+        run();
+        pollTimersRef.current.set(id, setInterval(run, POLL_MS[id]));
+      } else if (!on && running) {
+        clearInterval(pollTimersRef.current.get(id)!);
+        pollTimersRef.current.delete(id);
+        setData((d) => (d[id].length ? { ...d, [id]: [] } : d));
+      }
     });
-
-    return () => timers.forEach(clearInterval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, layers]);
+
+  // stop every poll timer on unmount (not on each toggle)
+  useEffect(
+    () => () => {
+      for (const t of pollTimersRef.current.values()) clearInterval(t);
+      pollTimersRef.current.clear();
+    },
+    []
+  );
 
   // ---- flights: reconcile interpolation state on each poll (no full rebuild) ----
   useEffect(() => {
@@ -1997,28 +2064,35 @@ export default function WorldView({ onReady }: { onReady?: () => void }) {
     const viewer = viewerRef.current;
     if (!viewer || !ready) return;
 
-    // refresh selection entries for static layers only (flights + ships manage theirs)
-    for (const k of [...selMapRef.current.keys()]) {
-      if (!k.startsWith("flights:") && !k.startsWith("ships:")) {
-        selMapRef.current.delete(k);
-      }
-    }
-
     STATIC_LAYERS.forEach((id) => {
       let ds = dsMapRef.current.get(id);
       if (!ds) {
         ds = new Cesium.CustomDataSource(id);
         viewer.dataSources.add(ds);
         dsMapRef.current.set(id, ds);
+        // dense layers cluster their markers (huge win when many are enabled)
+        if (CLUSTER_LAYERS.has(id)) enableClustering(ds, LAYER_BY_ID[id].color);
       }
       // `layers[id]` is undefined for any layer that's been removed from the
       // registry but is still wired into FETCHERS (e.g. the dormant "bases").
       // Cesium's `show` setter rejects undefined ("value is required"), so coerce.
-      ds.show = !!layers[id];
-      if (layers[id]) {
-        renderLayer(ds, id, data[id], selMapRef.current);
-      } else {
+      const on = !!layers[id];
+      ds.show = on;
+      if (on) {
+        // Only (re)build when THIS layer's data actually changed. Toggling an
+        // unrelated layer must not tear down + rebuild every active layer — that
+        // O(n) rebuild on every toggle is what crashed "enable-all-layers".
+        if (renderedDataRef.current.get(id) !== data[id]) {
+          ds.entities.suspendEvents(); // batch the bulk add (skip per-add churn)
+          renderLayer(ds, id, data[id], selMapRef.current);
+          ds.entities.resumeEvents();
+          renderedDataRef.current.set(id, data[id]);
+        }
+      } else if (ds.entities.values.length) {
         ds.entities.removeAll();
+        for (const k of [...selMapRef.current.keys()])
+          if (k.startsWith(id + ":")) selMapRef.current.delete(k);
+        renderedDataRef.current.delete(id);
       }
     });
   }, [data, layers, ready]);
