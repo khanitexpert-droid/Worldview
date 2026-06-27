@@ -1,6 +1,7 @@
 import type { ActivityEvent } from "@/lib/types";
 import { classifyTitle } from "@/lib/activity";
 import { geolocate } from "@/lib/places";
+import { fetchTelegramPosts } from "@/lib/telegramFeed";
 
 export const dynamic = "force-dynamic";
 
@@ -93,6 +94,47 @@ async function fetchFeed(feed: (typeof FEEDS)[number]): Promise<ActivityEvent[]>
   return parse(await res.text(), feed.source);
 }
 
+// collapse a multi-line social post into a single clean headline line, and
+// scrub source fingerprints (@channel sign-offs, t.me links, "subscribe" CTAs)
+// so a post can't be traced back to its Telegram channel.
+function headline(text: string, max = 160): string {
+  const one = text
+    .replace(/https?:\/\/t\.me\/\S+/gi, "")
+    .replace(/@[A-Za-z0-9_]+/g, "")
+    .replace(/\b(subscribe|join|follow)\b[^.!?]*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return one.length > max ? one.slice(0, max - 1).trimEnd() + "…" : one;
+}
+
+// Live social-OSINT posts, classified into the same categories as the RSS feed
+// and merged into the stream. Source is deliberately shown as generic "OSINT" —
+// the channel/platform name is not surfaced. Only conflict-classifiable posts
+// are kept (same rule the RSS items follow), so the feed stays coherent.
+async function fetchOsint(): Promise<ActivityEvent[]> {
+  const posts = await fetchTelegramPosts(60);
+  const out: ActivityEvent[] = [];
+  for (const p of posts) {
+    const c = classifyTitle(p.text);
+    if (!c) continue;
+    const g = geolocate(p.text);
+    out.push({
+      id: p.url,
+      category: c.category,
+      severity: c.severity,
+      title: headline(p.text),
+      url: p.url,
+      domain: "OSINT", // hide the telegram/channel source
+      time: p.ts || Date.now(),
+      lat: g?.lat,
+      lon: g?.lon,
+      place: g?.name,
+      image: p.photo,
+    });
+  }
+  return out;
+}
+
 function json(items: ActivityEvent[], sMaxAge: number) {
   return Response.json(
     { items, source: "RSS", live: items.length > 0, fetchedAt: new Date().toISOString() },
@@ -107,7 +149,10 @@ function json(items: ActivityEvent[], sMaxAge: number) {
 export async function GET() {
   if (cache && Date.now() - cache.at < CACHE_TTL) return json(cache.items, 180);
 
-  const settled = await Promise.allSettled(FEEDS.map(fetchFeed));
+  const settled = await Promise.allSettled([
+    ...FEEDS.map(fetchFeed),
+    fetchOsint(),
+  ]);
   const merged = settled.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
 
   // de-dupe by title, newest first

@@ -268,6 +268,25 @@ export interface CaspianReport {
   summary: string; // short plain-text summary (HTML-stripped RSS description)
 }
 
+/**
+ * One normalized social-OSINT post (Telegram). Produced by lib/telegramFeed and
+ * consumed server-side by /api/activity, which classifies each post and merges
+ * it into the conflict stream with the source relabeled as generic "OSINT".
+ */
+export interface SocialPost {
+  id: string; // permalink (stable de-dupe key)
+  platform: "telegram";
+  source: string; // channel display, e.g. "🗺 Rybar" (not surfaced to the client)
+  channel?: string; // raw handle, e.g. "rybar"
+  text: string;
+  time: string; // relative label from upstream, e.g. "7m ago"
+  ts: number; // epoch ms (sorting / freshness); 0 if unknown
+  url: string; // permalink (t.me/…)
+  photo?: string; // first attached image, if any
+  views?: string; // view-count label
+  severity?: string; // upstream OSINT classification, when present
+}
+
 /** A financial headline for the MARKETS tab's FIN NEWS feed (free CNBC RSS). */
 export interface FinHeadline {
   id: string; // RSS guid (stable de-dupe key)
